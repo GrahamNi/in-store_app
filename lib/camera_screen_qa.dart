@@ -1,0 +1,702 @@
+import 'dart:async';
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:camera/camera.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'models/app_models.dart';
+import 'components/camera_qa/camera_qa.dart';
+
+// Professional color scheme
+class CameraColors {
+  static const Color primary = Color(0xFF1E1E5C); // Professional blue
+  static const Color success = Color(0xFF27AE60); // Professional green
+  static const Color warning = Color(0xFFFF9500); // Standout yellow/orange
+  static const Color white = Colors.white;
+  static const Color black = Colors.black;
+  static const Color overlay = Color(0x80000000);
+}
+
+class CameraScreen extends StatefulWidget {
+  final String storeId;
+  final String storeName;
+  final String? area;
+  final String? aisle;
+  final String? segment;
+  final CameraMode cameraMode;
+  final InstallationType? installationType;
+  final int? aisleNumber;
+  final Function(InstallationType, int?)? onCaptureComplete;
+
+  const CameraScreen({
+    super.key,
+    required this.storeId,
+    required this.storeName,
+    this.area,
+    this.aisle,
+    this.segment,
+    required this.cameraMode,
+    this.installationType,
+    this.aisleNumber,
+    this.onCaptureComplete,
+  });
+
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
+  CameraController? _controller;
+  bool _isInitialized = false;
+  String _status = 'Initializing camera...';
+  int _photoCount = 0;
+  bool _isDisposed = false;
+  bool _isCapturing = false;
+  bool _hasSceneCapture = false;
+  CameraMode _currentMode = CameraMode.sceneCapture;
+  
+  late AnimationController _captureButtonController;
+  late AnimationController _flashController;
+  
+  // QA System
+  late CameraQASystem _qaSystem;
+  QAAssessment? _currentQA;
+  QAAssessment? _previousQA;
+  StreamSubscription<QAAssessment>? _qaSubscription;
+  
+  @override
+  void initState() {
+    super.initState();
+    _currentMode = widget.cameraMode;
+    _initializeAnimations();
+    _initializeQASystem();
+    _initializeCamera();
+  }
+
+  void _initializeAnimations() {
+    _captureButtonController = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    
+    _flashController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+  }
+
+  void _initializeQASystem() {
+    _qaSystem = CameraQASystem();
+    _qaSubscription = _qaSystem.assessmentStream.listen((assessment) {
+      if (!mounted || _isDisposed) return;
+      
+      setState(() {
+        _previousQA = _currentQA;
+        _currentQA = assessment;
+      });
+      
+      // Provide haptic feedback for quality changes
+      QAHapticManager.onQualityChange(assessment, _previousQA);
+    });
+  }
+
+  Future<void> _initializeCamera() async {
+    try {
+      if (_isDisposed) return;
+      
+      final permission = await Permission.camera.request();
+      
+      if (_isDisposed || !mounted) return;
+      
+      if (permission != PermissionStatus.granted) {
+        setState(() {
+          _status = 'Camera permission required';
+        });
+        return;
+      }
+
+      final cameras = await availableCameras();
+      
+      if (_isDisposed || !mounted) return;
+      
+      if (cameras.isEmpty) {
+        setState(() {
+          _status = 'No camera found';
+        });
+        return;
+      }
+
+      _controller = CameraController(
+        cameras.first,
+        ResolutionPreset.high,
+        enableAudio: false,
+      );
+
+      await _controller!.initialize();
+      
+      if (_isDisposed || !mounted) return;
+
+      setState(() {
+        _isInitialized = true;
+        _status = 'Camera ready';
+      });
+
+      // Start QA system after camera is ready
+      _qaSystem.updateCameraController(_controller);
+      _startQASystem();
+
+    } catch (e) {
+      if (_isDisposed || !mounted) return;
+      setState(() {
+        _status = 'Camera error';
+      });
+      debugPrint('Camera initialization error: $e');
+    }
+  }
+
+  void _startQASystem() {
+    if (!_isInitialized) return;
+    
+    final enableLabelDetection = _currentMode == CameraMode.labelCapture;
+    _qaSystem.start(enableLabelDetection: enableLabelDetection);
+  }
+
+  void _stopQASystem() {
+    _qaSystem.stop();
+  }
+
+  Future<void> _takePicture() async {
+    if (_controller == null || !_controller!.value.isInitialized || _isDisposed || _isCapturing) {
+      return;
+    }
+
+    try {
+      setState(() {
+        _isCapturing = true;
+      });
+
+      await _captureButtonController.forward();
+      
+      _flashController.forward().then((_) {
+        _flashController.reverse();
+      });
+
+      // Enhanced haptic feedback based on quality
+      if (_currentQA != null && _currentQA!.isExcellentQuality) {
+        HapticFeedback.mediumImpact();
+      } else if (_currentQA != null && _currentQA!.isGoodQuality) {
+        HapticFeedback.lightImpact();
+      } else {
+        HapticFeedback.selectionClick();
+      }
+
+      final image = await _controller!.takePicture();
+      
+      if (_isDisposed || !mounted) return;
+      
+      setState(() {
+        _photoCount++;
+        _isCapturing = false;
+        
+        if (_currentMode == CameraMode.sceneCapture) {
+          _hasSceneCapture = true;
+        }
+      });
+
+      _captureButtonController.reverse();
+
+      if (widget.onCaptureComplete != null && widget.installationType != null) {
+        widget.onCaptureComplete!(widget.installationType!, widget.aisleNumber);
+      }
+
+      debugPrint('Photo saved: ${image.path}');
+      
+      // Log QA info for this capture
+      if (_currentQA != null) {
+        debugPrint('Capture QA - Overall: ${(_currentQA!.overallScore * 100).toInt()}%, '
+                   'Stability: ${_currentQA!.stability.label}, '
+                   'Focus: ${_currentQA!.focusQuality.label}');
+      }
+      
+    } catch (e) {
+      if (_isDisposed || !mounted) return;
+      setState(() {
+        _isCapturing = false;
+      });
+      _captureButtonController.reverse();
+      debugPrint('Capture error: $e');
+    }
+  }
+
+  void _retakePhoto() {
+    setState(() {
+      if (_currentMode == CameraMode.sceneCapture) {
+        _hasSceneCapture = false;
+        _photoCount = 0;
+      }
+    });
+    HapticFeedback.lightImpact();
+    debugPrint('Retaking photo - previous image should be deleted');
+  }
+
+  void _switchToLabels() {
+    setState(() {
+      _currentMode = CameraMode.labelCapture;
+    });
+    
+    // Restart QA system with label detection enabled
+    _stopQASystem();
+    _startQASystem();
+    
+    HapticFeedback.lightImpact();
+  }
+
+  void _nextLocation() {
+    // Navigate back to location selection (not store selection)
+    Navigator.pop(context); // Just go back one step to location selection
+  }
+
+  void _endVisit() {
+    // Navigate all the way back to store selection to end the visit
+    Navigator.popUntil(context, (route) => route.isFirst);
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _stopQASystem();
+    _qaSubscription?.cancel();
+    _qaSystem.dispose();
+    _controller?.dispose();
+    _captureButtonController.dispose();
+    _flashController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
+        children: [
+          // Full-screen camera preview
+          if (_isInitialized && _controller != null)
+            SizedBox.expand(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _controller!.value.previewSize?.height ?? 1,
+                  height: _controller!.value.previewSize?.width ?? 1,
+                  child: CameraPreview(_controller!),
+                ),
+              ),
+            )
+          else
+            Container(
+              color: Colors.black,
+              child: const Center(
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2,
+                ),
+              ),
+            ),
+
+          // QA Overlay System
+          if (_isInitialized && _currentQA != null)
+            CameraQAOverlay(
+              assessment: _currentQA!,
+              isLabelMode: _currentMode == CameraMode.labelCapture,
+              screenSize: MediaQuery.of(context).size,
+            ),
+
+          // Flash overlay
+          AnimatedBuilder(
+            animation: _flashController,
+            builder: (context, child) {
+              return _flashController.value > 0
+                  ? Positioned.fill(
+                      child: Container(
+                        color: Colors.white.withOpacity(_flashController.value * 0.8),
+                      ),
+                    )
+                  : const SizedBox.shrink();
+            },
+          ),
+
+          // Top overlay
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: EdgeInsets.only(
+                top: MediaQuery.of(context).padding.top + 12,
+                left: 20,
+                right: 20,
+                bottom: 12,
+              ),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.6),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _buildTopButton(
+                    icon: Icons.close,
+                    onTap: () => Navigator.pop(context),
+                  ),
+                  
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: _currentMode == CameraMode.sceneCapture
+                              ? CameraColors.primary.withOpacity(0.9)
+                              : Colors.orange.withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Text(
+                          _currentMode == CameraMode.sceneCapture ? 'SCENE' : 'LABELS',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      
+                      const SizedBox(width: 12),
+                      
+                      if (_photoCount > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.6),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '$_photoCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  
+                  _buildTopButton(
+                    icon: Icons.settings,
+                    onTap: () => openAppSettings(),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Bottom controls
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.of(context).padding.bottom + 20,
+                top: 40,
+              ),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.8),
+                    Colors.black.withOpacity(0.4),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: _buildBottomControls(),
+            ),
+          ),
+
+          // Status bar - only show if not ready
+          if (!_isInitialized)
+            Positioned(
+              left: 20,
+              right: 20,
+              top: 120,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.orange,
+                  borderRadius: BorderRadius.circular(25),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        _status,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomControls() {
+    final isInStorePromo = widget.installationType != null;
+    
+    if (_currentMode == CameraMode.sceneCapture && isInStorePromo) {
+      // In-Store Promo Scene mode: Retake, Capture, Go to Labels
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Retake button (only if scene captured)
+          if (_hasSceneCapture)
+            _buildProfessionalButton(
+              icon: Icons.refresh,
+              label: 'Retake',
+              onTap: _retakePhoto,
+              color: CameraColors.primary,
+            )
+          else
+            const SizedBox(width: 90),
+          
+          _buildCaptureButton(),
+          
+          // Go to Labels button (only actionable after scene capture)
+          _buildProfessionalButton(
+            icon: Icons.arrow_forward,
+            label: 'Labels',
+            onTap: _hasSceneCapture ? _switchToLabels : null,
+            color: _hasSceneCapture ? CameraColors.warning : null, // Standout yellow when enabled
+          ),
+        ],
+      );
+    } else if (_currentMode == CameraMode.labelCapture && isInStorePromo) {
+      // In-Store Promo Label mode: Next Location, Capture, End Visit
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          _buildProfessionalButton(
+            icon: Icons.location_on,
+            label: 'Next Location',
+            onTap: _nextLocation,
+            color: CameraColors.primary,
+          ),
+          
+          _buildCaptureButton(),
+          
+          _buildProfessionalButton(
+            icon: Icons.check_circle,
+            label: 'End Visit',
+            onTap: _endVisit,
+            color: CameraColors.success,
+          ),
+        ],
+      );
+    } else {
+      // Direct In-Store Label mode (Profile A): Just capture and end
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          const SizedBox(width: 90),
+          
+          _buildCaptureButton(),
+          
+          _buildProfessionalButton(
+            icon: Icons.check_circle,
+            label: 'End Visit',
+            onTap: _endVisit,
+            color: CameraColors.success,
+          ),
+        ],
+      );
+    }
+  }
+
+  Widget _buildTopButton({required IconData icon, required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.5),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withOpacity(0.2),
+            width: 1,
+          ),
+        ),
+        child: Icon(
+          icon,
+          color: Colors.white,
+          size: 20,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfessionalButton({
+    required IconData icon,
+    required String label,
+    VoidCallback? onTap,
+    Color? color,
+  }) {
+    final isEnabled = onTap != null;
+    final buttonColor = color ?? CameraColors.primary;
+    
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 90,
+        height: 56,
+        decoration: BoxDecoration(
+          color: isEnabled ? buttonColor : Colors.grey.shade600,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.2),
+            width: 1,
+          ),
+          boxShadow: isEnabled ? [
+            BoxShadow(
+              color: buttonColor.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ] : [],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: Colors.white,
+              size: 22,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCaptureButton() {
+    return GestureDetector(
+      onTapDown: (_) => _captureButtonController.forward(),
+      onTapUp: (_) => _takePicture(),
+      onTapCancel: () => _captureButtonController.reverse(),
+      child: AnimatedBuilder(
+        animation: _captureButtonController,
+        builder: (context, child) {
+          final scale = 1.0 - (_captureButtonController.value * 0.1);
+          return Transform.scale(
+            scale: scale,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // QA Quality Ring (only show when QA is active and decent quality)
+                if (_currentQA != null && _currentQA!.overallScore > 0.3)
+                  CaptureButtonQAIndicator(
+                    assessment: _currentQA!,
+                    size: 80,
+                  ),
+                
+                // Main capture button
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white,
+                      width: 4,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
+                      ),
+                      BoxShadow(
+                        color: Colors.white.withOpacity(0.1),
+                        blurRadius: 8,
+                        offset: const Offset(0, -2),
+                      ),
+                    ],
+                  ),
+                  child: _isCapturing
+                      ? Container(
+                          padding: const EdgeInsets.all(22),
+                          child: const CircularProgressIndicator(
+                            strokeWidth: 3,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                          ),
+                        )
+                      : Container(
+                          margin: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: _isInitialized ? Colors.black : Colors.grey,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
