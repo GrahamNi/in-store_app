@@ -1,0 +1,34 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.24.0'
+        channel: 'stable'
+    
+    - name: Install dependencies
+      run: flutter pub get
+    
+    - name: Build iOS IPA
+      run: flutter build ipa --release --no-codesign
+    
+    - name: Upload IPA
+      uses: actions/upload-artifact@v3
+      with:
+        name: in-store-app-ios
+        path: build/ios/ipa/*.ipa
+        retention-days: 30
