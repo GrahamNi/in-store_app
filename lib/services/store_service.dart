@@ -44,39 +44,29 @@ class StoreService {
           headers: {
             'Content-Type': 'application/json',
           },
-          sendTimeout: const Duration(seconds: 30),
-          receiveTimeout: const Duration(seconds: 30),
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
         ),
       );
       
       if (response.statusCode == 200) {
         final data = response.data;
+        debugPrint('✅ API Response received: ${data.runtimeType}');
         
-        if (data is List) {
-          // API returns array of stores
-          return List<Map<String, dynamic>>.from(data);
-        } else if (data is Map<String, dynamic>) {
-          // API returns object - check for different possible keys
-          if (data.containsKey('results')) {
-            // Your API uses 'results' key!
-            return List<Map<String, dynamic>>.from(data['results']);
-          } else if (data.containsKey('stores')) {
-            // Alternative: 'stores' key
-            return List<Map<String, dynamic>>.from(data['stores']);
-          } else if (data.containsKey('data')) {
-            // Alternative: 'data' key
-            return List<Map<String, dynamic>>.from(data['data']);
-          } else {
-            debugPrint('🔍 STORE SERVICE: Map response with unexpected keys: ${data.keys.toList()}');
-            debugPrint('🔍 STORE SERVICE: Full response: $data');
-            return [];
+        if (data is Map<String, dynamic> && data.containsKey('results')) {
+          // API returns {"count": 11, "results": [...]}
+          final results = data['results'];
+          if (results is List) {
+            debugPrint('✅ Found ${results.length} stores in results');
+            return List<Map<String, dynamic>>.from(results);
           }
-        } else {
-          debugPrint('Unexpected API response format: $data');
-          return [];
         }
+        
+        debugPrint('❌ Unexpected API response format');
+        debugPrint('Response: $data');
+        return [];
       } else {
-        debugPrint('Stores API error: ${response.statusCode}');
+        debugPrint('❌ Stores API error: ${response.statusCode}');
         return [];
       }
       
@@ -107,21 +97,24 @@ class StoreService {
   }
   
   static Map<String, dynamic> convertApiStoreToAppStore(Map<String, dynamic> apiStore) {
-    // Debug the incoming store data
-    debugPrint('🔍 CONVERT: Converting API store: $apiStore');
+    // API format: {"id": 37013, "name": "New World New Plymouth", "lat": -39.0578, "lon": 174.0777, "distance_km": 2112.0478, "extra": {"address_1": "78 Courtenay Street", "city": "New Plymouth"}}
+    
+    final extra = apiStore['extra'] as Map<String, dynamic>? ?? {};
+    final name = apiStore['name'] ?? 'Unknown Store';
+    final chain = name.toString().split(' ').first; // Extract "New World" from "New World New Plymouth"
     
     return {
-      'id': apiStore['id']?.toString() ?? apiStore['store_id']?.toString() ?? 'unknown',
-      'name': apiStore['name'] ?? apiStore['store_name'] ?? 'Unknown Store',
-      'chain': apiStore['chain'] ?? apiStore['brand'] ?? apiStore['store_name']?.toString().split(' ').first ?? 'Unknown',
-      'address': apiStore['address'] ?? apiStore['address_1'] ?? '',
-      'suburb': apiStore['suburb'] ?? apiStore['locality'] ?? apiStore['city'] ?? '',
-      'city': apiStore['city'] ?? apiStore['suburb'] ?? '',
-      'postcode': apiStore['postcode'] ?? apiStore['postal_code'] ?? '',
-      'state': apiStore['state'] ?? apiStore['region'] ?? '',
-      'latitude': (apiStore['latitude'] ?? apiStore['lat'] ?? 0.0).toDouble(),
-      'longitude': (apiStore['longitude'] ?? apiStore['lon'] ?? 0.0).toDouble(),
-      'distance': (apiStore['distance'] ?? apiStore['distance_km'] ?? 0.0).toDouble(),
+      'id': apiStore['id']?.toString() ?? 'unknown',
+      'name': name,
+      'chain': chain,
+      'address': extra['address_1'] ?? '',
+      'suburb': extra['suburb'] ?? '',
+      'city': extra['city'] ?? '',
+      'postcode': extra['postcode'] ?? '',
+      'state': extra['state'] ?? '',
+      'latitude': (apiStore['lat'] ?? 0.0).toDouble(),
+      'longitude': (apiStore['lon'] ?? 0.0).toDouble(),
+      'distance': (apiStore['distance_km'] ?? 0.0).toDouble(),
     };
   }
   

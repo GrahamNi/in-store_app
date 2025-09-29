@@ -35,10 +35,36 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
 
   void _initializeUploadQueue() async {
     try {
+      // 🔧 FIX: Ensure uploadQueue is always initialized as a proper List
+      setState(() {
+        uploadQueue = <UploadQueueItem>[]; // Explicitly typed as List<UploadQueueItem>
+        statusMessage = 'Loading queue...';
+      });
+      
       // Check if upload queue is initialized
       if (!UploadQueueManager.instance.isInitialized) {
         setState(() {
           statusMessage = 'Upload queue not initialized';
+          uploadQueue = <UploadQueueItem>[]; // Ensure empty list, not null
+        });
+        return;
+      }
+
+      // FORCE REFRESH THE QUEUE DATA - Get directly from database
+      final currentQueue = await UploadQueueDatabase.getAllUploads();
+      debugPrint('🔥 FORCED QUEUE REFRESH: ${currentQueue.length} items loaded');
+      
+      // 🔧 FIX: Verify we have a proper List before setting state
+      if (currentQueue is List<UploadQueueItem>) {
+        setState(() {
+          uploadQueue = currentQueue;
+        });
+        debugPrint('✅ Queue set successfully with ${uploadQueue.length} items');
+      } else {
+        debugPrint('❌ ERROR: currentQueue is not a List<UploadQueueItem>: ${currentQueue.runtimeType}');
+        setState(() {
+          uploadQueue = <UploadQueueItem>[];
+          statusMessage = 'Error: Invalid queue data type';
         });
         return;
       }
@@ -46,17 +72,34 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
       // Subscribe to queue updates
       _queueSubscription = UploadQueueManager.instance.queueStream.listen((queue) {
         if (mounted) {
-          setState(() {
-            uploadQueue = queue;
-            // 🔧 FIX: Update button state based on actual queue activity
-            isUploading = queue.any((item) => item.status == UploadStatus.uploading) || 
-                        (UploadQueueManager.instance.isProcessing && pendingCount > 0);
-          });
+          debugPrint('📊 QUEUE SCREEN: Received ${queue.length} items');
           
-          // 🔧 FIX: Stop animation when all uploads are done
-          if (!isUploading && _refreshController.isAnimating) {
-            _refreshController.stop();
-            _refreshController.reset();
+          // 🔧 FIX: Verify queue is a proper List before using it
+          if (queue is List<UploadQueueItem>) {
+            for (var item in queue) {
+              debugPrint('📊 QUEUE SCREEN: ${item.id} - ${item.status} - ${item.metadata.originalFilename}');
+            }
+            
+            setState(() {
+              uploadQueue = queue;
+              // Update button state based on actual queue activity
+              isUploading = queue.any((item) => item.status == UploadStatus.uploading) || 
+                          (UploadQueueManager.instance.isProcessing && pendingCount > 0);
+            });
+            
+            debugPrint('📊 QUEUE SCREEN: Counters - Pending: $pendingCount, Done: $completedCount, Failed: $failedCount, Total: $totalCount');
+            
+            // Stop animation when all uploads are done
+            if (!isUploading && _refreshController.isAnimating) {
+              _refreshController.stop();
+              _refreshController.reset();
+            }
+          } else {
+            debugPrint('❌ ERROR: Queue stream data is not a List<UploadQueueItem>: ${queue.runtimeType}');
+            setState(() {
+              uploadQueue = <UploadQueueItem>[];
+              statusMessage = 'Error: Invalid queue stream data';
+            });
           }
         }
       });
@@ -76,8 +119,10 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
       });
 
     } catch (e) {
+      debugPrint('❌ ERROR in _initializeUploadQueue: $e');
       setState(() {
         statusMessage = 'Error: $e';
+        uploadQueue = <UploadQueueItem>[]; // Ensure we always have a valid list
       });
     }
   }
@@ -117,17 +162,44 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
     UploadQueueManager.instance.clearCompleted();
   }
 
-  int get pendingCount => uploadQueue.where((item) => 
-      item.status == UploadStatus.pending || 
-      item.status == UploadStatus.uploading ||
-      item.status == UploadStatus.paused).length;
+  int get pendingCount {
+    // 🔧 FIX: Add null safety check
+    if (uploadQueue.isEmpty) return 0;
+    
+    debugPrint('COUNTER DEBUG: Total queue items: ${uploadQueue.length}');
+    final pending = uploadQueue.where((item) => 
+        item.status == UploadStatus.pending || 
+        item.status == UploadStatus.uploading ||
+        item.status == UploadStatus.paused).length;
+    debugPrint('COUNTER DEBUG: Pending count: $pending');
+    return pending;
+  }
 
-  int get completedCount => uploadQueue.where((item) => 
-      item.status == UploadStatus.completed).length;
+  int get completedCount {
+    // 🔧 FIX: Add null safety check
+    if (uploadQueue.isEmpty) return 0;
+    
+    final completed = uploadQueue.where((item) => 
+        item.status == UploadStatus.completed).length;
+    debugPrint('COUNTER DEBUG: Completed count: $completed');
+    return completed;
+  }
 
-  int get failedCount => uploadQueue.where((item) => 
-      item.status == UploadStatus.failed ||
-      item.status == UploadStatus.stuck).length;
+  int get failedCount {
+    // 🔧 FIX: Add null safety check
+    if (uploadQueue.isEmpty) return 0;
+    
+    final failed = uploadQueue.where((item) => 
+        item.status == UploadStatus.failed ||
+        item.status == UploadStatus.stuck).length;
+    debugPrint('COUNTER DEBUG: Failed count: $failed');
+    return failed;
+  }
+
+  int get totalCount {
+    // 🔧 FIX: Add null safety check
+    return uploadQueue.length;
+  }
 
   String _formatTime(DateTime dateTime) {
     final hour = dateTime.hour.toString().padLeft(2, '0');
@@ -147,6 +219,10 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.of(context).size;
     final isSmallScreen = screenSize.width < 400;
+
+    // 🔧 FIX: Add debug print to check what we're about to render
+    debugPrint('🎨 RENDERING: uploadQueue.length = ${uploadQueue.length}');
+    debugPrint('🎨 RENDERING: uploadQueue.runtimeType = ${uploadQueue.runtimeType}');
 
     return Scaffold(
       backgroundColor: AppDesignSystem.systemGroupedBackground,
@@ -172,12 +248,26 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          'Upload Queue',
-                          style: AppDesignSystem.title2.copyWith(
-                            color: AppDesignSystem.labelPrimary,
-                            fontSize: isSmallScreen ? 18 : null,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Upload Queue',
+                              style: AppDesignSystem.title2.copyWith(
+                                color: AppDesignSystem.labelPrimary,
+                                fontSize: isSmallScreen ? 18 : null,
+                              ),
+                            ),
+                            // Total counter
+                            Text(
+                              '$totalCount images in queue',
+                              style: AppDesignSystem.caption1.copyWith(
+                                color: AppDesignSystem.systemBlue,
+                                fontSize: isSmallScreen ? 12 : 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       if (completedCount > 0)
@@ -326,9 +416,18 @@ class _UploadQueueScreenState extends State<UploadQueueScreen>
                     ? _buildEmptyState(isSmallScreen)
                     : ListView.builder(
                         padding: EdgeInsets.all(isSmallScreen ? 12 : AppDesignSystem.spacingMd),
-                        itemCount: uploadQueue.length,
+                        itemCount: uploadQueue.length, // 🔧 FIX: Use .length property
                         itemBuilder: (context, index) {
-                          return _buildUploadItem(uploadQueue[index], isSmallScreen);
+                          // 🔧 FIX: Add bounds check
+                          if (index < 0 || index >= uploadQueue.length) {
+                            debugPrint('❌ ERROR: Index out of bounds: $index >= ${uploadQueue.length}');
+                            return Container();
+                          }
+                          
+                          final item = uploadQueue[index];
+                          debugPrint('🎨 RENDERING ITEM: ${item.id} at index $index');
+                          
+                          return _buildUploadItem(item, isSmallScreen);
                         },
                       ),
               ),

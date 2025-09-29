@@ -128,12 +128,34 @@ class _EnhancedLocationSelectionScreenState extends State<EnhancedLocationSelect
     // Only direct In-Store profile (Profile A) goes straight to labels
     final cameraMode = CameraMode.sceneCapture; // Always start with scene
 
+    // 🔧 CRITICAL FIX: Convert InstallationType to proper location metadata
+    // This ensures instore promo workflow gets location data tagged to captures
+    String area;
+    String aisleFormatted;
+    String segment;
+    
+    if (type.requiresAisle && aisle != null) {
+      // Aisle-based installations
+      area = 'Aisle'; // Generic area for aisle installations
+      aisleFormatted = 'Aisle $aisle'; // "Aisle 7"
+      segment = type.displayName; // "Front", "Back", "End", etc.
+    } else {
+      // Off-location installations
+      area = type.displayName; // "Deli", "POS", "Entrance"
+      aisleFormatted = type.displayName; // Same as area for off-locations
+      segment = 'Main'; // Default segment for off-locations
+    }
+
     await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => CameraScreen(
           storeId: widget.storeId,
           storeName: widget.storeName,
+          // ✅ NOW PROPERLY PASSES LOCATION DATA FOR INSTORE PROMO
+          area: area,
+          aisle: aisleFormatted,
+          segment: segment,
           installationType: type,
           aisleNumber: aisle,
           cameraMode: cameraMode,

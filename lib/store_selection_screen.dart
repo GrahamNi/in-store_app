@@ -198,8 +198,8 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
       end: 1.0,
     ).animate(_fadeController);
 
-    // First, try to download/update stores from server if needed
-    _initializeStores();
+    // Load stores directly
+    _loadStores();
   }
   
   Future<void> _initializeStores() async {
@@ -229,45 +229,46 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
     });
     
     // NEW WORKFLOW: 
-    // 1. Check cache or download all stores from API
-    // 2. Calculate distances locally
-    // 3. Show nearest 5
+    // 1. Try API first
+    // 2. If API fails, use mock data
     
-    debugPrint('🚀 STORE LOAD: Checking for cached stores or downloading from API...');
+    debugPrint('🚀 STORE LOAD: Calling API...');
     
-    // Try the fixed service that handles the correct workflow
-    final nearestStores = await StoreServiceFixed.getNearestStores();
-    
-    debugPrint('🔍 STORE LOAD: nearestStores.isEmpty = ${nearestStores.isEmpty}');
-    debugPrint('🔍 STORE LOAD: nearestStores.length = ${nearestStores.length}');
-    if (nearestStores.isNotEmpty) {
-      debugPrint('🔍 STORE LOAD: First store: ${nearestStores.first}');
-      // Convert API format to app Store objects
-      stores = nearestStores.map((storeData) {
-        final convertedData = StoreServiceFixed.convertApiStoreToAppStore(storeData);
-        final store = Store.fromApiData(convertedData);
-        
-        // Calculate walking time if distance is provided
-        if (store.distance != null && store.distance! > 0) {
-          store.walkingTime = _calculateWalkingTime(store.distance!);
-        }
-        
-        return store;
-      }).toList();
+    try {
+      final apiStoresData = await StoreService.getNearestStores(
+        latitude: -32.9273,
+        longitude: 151.7817,
+      );
       
-      setState(() {
-        isUsingApi = true;
-      });
-      debugPrint('✅ Loaded ${stores.length} stores from API/cache');
-    } else {
-      debugPrint('🚀 STORE LOAD: No API stores available, using fallback mock data');
-      // Fallback to mock data and calculate distances
+      debugPrint('🔍 API returned ${apiStoresData.length} stores');
+      
+      if (apiStoresData.isNotEmpty) {
+        stores = apiStoresData.map((storeData) {
+          final convertedData = StoreService.convertApiStoreToAppStore(storeData);
+          final store = Store.fromApiData(convertedData);
+          
+          if (store.distance != null && store.distance! > 0) {
+            store.walkingTime = _calculateWalkingTime(store.distance!);
+          }
+          
+          return store;
+        }).toList();
+        
+        setState(() {
+          isUsingApi = true;
+        });
+        debugPrint('✅ Loaded ${stores.length} stores from API');
+      } else {
+        throw Exception('API returned no stores');
+      }
+    } catch (e) {
+      debugPrint('⚠️ API failed: $e, using mock data');
       stores = List.from(mockStores);
       await _getCurrentLocationAndCalculateDistances();
       setState(() {
         isUsingApi = false;
       });
-      debugPrint('⚠️ Using fallback mock data (${stores.length} stores)');
+      debugPrint('✅ Using ${stores.length} mock stores');
     }
     
     _updateClosestStores();
@@ -470,9 +471,11 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
     // Different navigation based on user profile
     if (widget.userProfile.userType == UserType.inStore) {
       // Profile A (instore): Go directly to camera in label capture mode
+      // NO LOCATION DATA - area, aisle, segment all remain null
       _navigateToCameraScreen(store, null, null, null, CameraMode.labelCapture);
     } else {
       // Profile B (instore promo): Go to location selection first
+      // WILL COLLECT LOCATION DATA through enhanced location selection
       _navigateToLocationSelection(store);
     }
   }
@@ -560,6 +563,9 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
         return 'assets/images/store_logos/iga_logo.png';
       case 'aldi':
         return 'assets/images/store_logos/aldi_logo.png';
+      case 'new world':
+      case 'newworld':
+        return 'assets/images/store_logos/newworld_logo.png';
       default:
         return '';
     }
