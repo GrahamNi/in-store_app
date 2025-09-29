@@ -27,7 +27,7 @@ jobs:
       run: flutter build ipa --release --no-codesign
     
     - name: Upload IPA
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: in-store-app-ios
         path: build/ios/ipa/*.ipa
