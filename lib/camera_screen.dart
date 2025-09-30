@@ -102,6 +102,18 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
   void _initializeQASystem() {
     _qaSystem = CameraQASystem();
+    
+    // Determine QA profile based on workflow
+    // Profile A (fast): No installationType = direct capture workflow
+    // Profile B (quality): Has installationType = location selection workflow
+    final qaProfile = widget.installationType == null 
+        ? QAProfile.fast    // Profile A - up to 2000 images, fast capture
+        : QAProfile.quality; // Profile B - smaller fonts, more time
+    
+    _qaSystem.setProfile(qaProfile);
+    
+    debugPrint('🎯 QA Profile set to: ${qaProfile == QAProfile.fast ? "FAST (Profile A)" : "QUALITY (Profile B)"}');
+    
     _qaSubscription = _qaSystem.assessmentStream.listen((assessment) {
       if (!mounted || _isDisposed) return;
       

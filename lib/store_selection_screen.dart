@@ -8,8 +8,7 @@ import 'enhanced_location_selection_screen.dart';
 import 'camera_screen.dart';
 import 'core/upload_queue_initializer.dart';
 import 'services/store_service.dart';
-import 'services/store_service_debug.dart';
-import 'services/store_service_fixed.dart';
+import 'services/store_cache.dart';
 
 class Store {
   final String id;
@@ -41,18 +40,27 @@ class Store {
   });
 
   factory Store.fromApiData(Map<String, dynamic> data) {
+    // Helper to safely convert to double
+    double parseDouble(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+    
     return Store(
-      id: data['id']?.toString() ?? 'unknown',
-      name: data['name'] ?? 'Unknown Store',
-      chain: data['chain'] ?? data['brand'] ?? 'Unknown',
-      address: data['address'] ?? '',
-      suburb: data['suburb'] ?? data['locality'] ?? '',
-      city: data['city'] ?? '',
-      postcode: data['postcode'] ?? data['postal_code'] ?? '',
-      state: data['state'] ?? data['region'] ?? '',
-      latitude: (data['latitude'] ?? data['lat'] ?? 0.0).toDouble(),
-      longitude: (data['longitude'] ?? data['lon'] ?? 0.0).toDouble(),
-      distance: (data['distance'] ?? 0.0).toDouble(),
+      id: data['store_id']?.toString() ?? data['id']?.toString() ?? 'unknown',
+      name: data['store_name']?.toString() ?? data['name']?.toString() ?? 'Unknown Store',
+      chain: data['chain']?.toString() ?? data['brand']?.toString() ?? 'Unknown',
+      address: data['address_1']?.toString() ?? data['address']?.toString() ?? '',
+      suburb: data['suburb']?.toString() ?? data['locality']?.toString() ?? '',
+      city: data['city']?.toString() ?? '',
+      postcode: data['postcode']?.toString() ?? data['postal_code']?.toString() ?? '',
+      state: data['state']?.toString() ?? data['region']?.toString() ?? '',
+      latitude: parseDouble(data['latitude'] ?? data['lat']),
+      longitude: parseDouble(data['longitude'] ?? data['lon']),
+      distance: parseDouble(data['distance_km'] ?? data['distance']),
     );
   }
 
@@ -91,93 +99,7 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   late Animation<double> _fadeAnimation;
   late AnimationController _staggerController;
 
-  // Fallback mock data if API fails
-  final List<Store> mockStores = [
-    Store(
-      id: '001',
-      name: 'Coles Charlestown',
-      chain: 'Coles',
-      address: '30 Pearson Street',
-      suburb: 'Charlestown',
-      city: 'Newcastle',
-      postcode: '2290',
-      state: 'NSW',
-      latitude: -32.9647,
-      longitude: 151.6928,
-    ),
-    Store(
-      id: '002',
-      name: 'Woolworths Kotara',
-      chain: 'Woolworths',
-      address: 'Northcott Drive',
-      suburb: 'Kotara',
-      city: 'Newcastle',
-      postcode: '2289',
-      state: 'NSW',
-      latitude: -32.9404,
-      longitude: 151.7071,
-    ),
-    Store(
-      id: '003',
-      name: 'Coles Newcastle West',
-      chain: 'Coles',
-      address: '166 Parry Street',
-      suburb: 'Newcastle West',
-      city: 'Newcastle',
-      postcode: '2302',
-      state: 'NSW',
-      latitude: -32.9273,
-      longitude: 151.7817,
-    ),
-    Store(
-      id: '004',
-      name: 'ALDI Jesmond',
-      chain: 'ALDI',
-      address: 'Blue Gum Road',
-      suburb: 'Jesmond',
-      city: 'Newcastle',
-      postcode: '2299',
-      state: 'NSW',
-      latitude: -32.9123,
-      longitude: 151.7456,
-    ),
-    Store(
-      id: '005',
-      name: 'Woolworths Newcastle West',
-      chain: 'Woolworths',
-      address: '166 Parry Street',
-      suburb: 'Newcastle West',
-      city: 'Newcastle',
-      postcode: '2302',
-      state: 'NSW',
-      latitude: -32.9273,
-      longitude: 151.7817,
-    ),
-    Store(
-      id: '006',
-      name: 'IGA Mayfield',
-      chain: 'IGA',
-      address: '45 Maitland Road',
-      suburb: 'Mayfield',
-      city: 'Newcastle',
-      postcode: '2304',
-      state: 'NSW',
-      latitude: -32.8967,
-      longitude: 151.7345,
-    ),
-    Store(
-      id: '007',
-      name: 'Coles Kotara',
-      chain: 'Coles',
-      address: 'Northcott Drive',
-      suburb: 'Kotara',
-      city: 'Newcastle',
-      postcode: '2289',
-      state: 'NSW',
-      latitude: -32.9404,
-      longitude: 151.7071,
-    ),
-  ];
+  // No mock data - API is mandatory on first load
 
   @override
   void initState() {
@@ -205,11 +127,6 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   Future<void> _initializeStores() async {
     // Download all stores on first launch or update if needed
     debugPrint('🎬 STORE INIT: Initializing store data...');
-    
-    // This will check if we need to update from server
-    await StoreServiceFixed.updateStoresIfNeeded();
-    
-    // Then load and display stores
     _loadStores();
   }
 
@@ -225,27 +142,25 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
     debugPrint('🚀 STORE LOAD: Starting _loadStores() method');
     setState(() {
       isLoading = true;
-      isLocationLoading = true;
     });
     
-    // NEW WORKFLOW: 
-    // 1. Try API first
-    // 2. If API fails, use mock data
-    
-    debugPrint('🚀 STORE LOAD: Calling API...');
-    
     try {
-      final apiStoresData = await StoreService.getNearestStores(
-        latitude: -32.9273,
-        longitude: 151.7817,
-      );
+      // FIRST: Try to load from cache (PERSISTENT)
+      final cachedStores = await StoreCache().cachedStores;
       
-      debugPrint('🔍 API returned ${apiStoresData.length} stores');
-      
-      if (apiStoresData.isNotEmpty) {
-        stores = apiStoresData.map((storeData) {
-          final convertedData = StoreService.convertApiStoreToAppStore(storeData);
-          final store = Store.fromApiData(convertedData);
+      if (cachedStores != null && cachedStores.isNotEmpty) {
+        debugPrint('✅ CACHE HIT: Using ${cachedStores.length} cached stores');
+        
+        // Get cached user location
+        final (lat, lon) = StoreCache().userLocation;
+        userLatitude = lat;
+        userLongitude = lon;
+        
+        debugPrint('📍 Using cached location: $lat, $lon');
+        
+        // Convert cached data to Store objects
+        stores = cachedStores.map((storeData) {
+          final store = Store.fromApiData(storeData);
           
           if (store.distance != null && store.distance! > 0) {
             store.walkingTime = _calculateWalkingTime(store.distance!);
@@ -257,168 +172,68 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
         setState(() {
           isUsingApi = true;
         });
-        debugPrint('✅ Loaded ${stores.length} stores from API');
+        
+        debugPrint('✅ Loaded ${stores.length} stores from CACHE');
       } else {
-        throw Exception('API returned no stores');
+        // FALLBACK: Load from API if cache is empty
+        debugPrint('⚠️ CACHE MISS: Loading from API...');
+        
+        final apiStoresData = await StoreService.getNearestStores(
+          latitude: -32.9273,
+          longitude: 151.7817,
+        );
+        
+        if (apiStoresData.isEmpty) {
+          throw Exception('API returned no stores');
+        }
+        
+        stores = apiStoresData.map((storeData) {
+          final store = Store.fromApiData(storeData);
+          
+          if (store.distance != null && store.distance! > 0) {
+            store.walkingTime = _calculateWalkingTime(store.distance!);
+          }
+          
+          return store;
+        }).toList();
+        
+        setState(() {
+          isUsingApi = true;
+        });
+        
+        debugPrint('✅ Loaded ${stores.length} stores from API');
+      }
+      
+      _updateClosestStores();
+      filteredStores = List.from(closestStores);
+
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+        _fadeController.forward();
       }
     } catch (e) {
-      debugPrint('⚠️ API failed: $e, using mock data');
-      stores = List.from(mockStores);
-      await _getCurrentLocationAndCalculateDistances();
-      setState(() {
-        isUsingApi = false;
-      });
-      debugPrint('✅ Using ${stores.length} mock stores');
+      debugPrint('❌ CRITICAL: Store load failed: $e');
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load stores: $e'),
+            backgroundColor: AppDesignSystem.systemRed,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
     
-    _updateClosestStores();
-    filteredStores = List.from(closestStores);
-
-    if (mounted) {
-      setState(() {
-        isLoading = false;
-        isLocationLoading = false;
-      });
-      _fadeController.forward();
-    }
     debugPrint('🚀 STORE LOAD: _loadStores() completed');
   }
 
-  Future<List<Store>> _loadStoresFromApi() async {
-    try {
-      debugPrint('🔍 STORE API DEBUG: Starting store load from API');
-      debugPrint('🔍 STORE API DEBUG: About to call StoreService.testStoresApi()');
-      
-      // Test API connection first
-      debugPrint('🔍 STORE API DEBUG: Testing API with enhanced debugging...');
-      final apiWorks = await StoreServiceDebug.testStoresApiEnhanced();
-      debugPrint('🔍 STORE API DEBUG: API connection test result: $apiWorks');
-      
-      if (!apiWorks) {
-        debugPrint('🔍 STORE API DEBUG: API test failed, using fallback data');
-        return [];
-      }
 
-      // Get user location
-      double? lat, lon;
-      try {
-        final position = await _getCurrentLocationOnly();
-        lat = position.latitude;
-        lon = position.longitude;
-        userLatitude = lat;
-        userLongitude = lon;
-        debugPrint('🔍 STORE API DEBUG: Got user location: $lat, $lon');
-      } catch (e) {
-        // Use fallback location
-        lat = -32.9273;
-        lon = 151.7817;
-        userLatitude = lat;
-        userLongitude = lon;
-        debugPrint('🔍 STORE API DEBUG: Using fallback location: $lat, $lon (Error: $e)');
-      }
-
-      // Call your stores API
-      debugPrint('🔍 STORE API DEBUG: Calling StoreService.getNearestStores with lat: $lat, lon: $lon');
-      final apiStoresData = await StoreService.getNearestStores(
-        latitude: lat,
-        longitude: lon,
-      );
-
-      debugPrint('🔍 STORE API DEBUG: API returned ${apiStoresData.length} stores');
-      if (apiStoresData.isNotEmpty) {
-        debugPrint('🔍 STORE API DEBUG: First store example: ${apiStoresData.first}');
-      }
-
-      if (apiStoresData.isEmpty) {
-        debugPrint('🔍 STORE API DEBUG: No stores returned from API');
-        return [];
-      }
-
-      // Convert API data to Store objects
-      final apiStores = apiStoresData.map((storeData) {
-        final convertedData = StoreService.convertApiStoreToAppStore(storeData);
-        final store = Store.fromApiData(convertedData);
-        
-        // Calculate walking time if distance is provided
-        if (store.distance != null && store.distance! > 0) {
-          store.walkingTime = _calculateWalkingTime(store.distance!);
-        }
-        
-        return store;
-      }).toList();
-
-      debugPrint('🔍 STORE API DEBUG: Successfully converted ${apiStores.length} stores to app format');
-      return apiStores;
-
-    } catch (e) {
-      debugPrint('🔍 STORE API DEBUG: Failed to load stores from API: $e');
-      return [];
-    }
-  }
-
-  Future<Position> _getCurrentLocationOnly() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    
-    if (permission == LocationPermission.deniedForever || 
-        permission == LocationPermission.denied) {
-      throw Exception('Location permission denied');
-    }
-    
-    return await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.medium,
-      timeLimit: const Duration(seconds: 10),
-    );
-  }
-  
-  Future<void> _getCurrentLocationAndCalculateDistances() async {
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      
-      if (permission == LocationPermission.deniedForever || 
-          permission == LocationPermission.denied) {
-        userLatitude = -32.9273;
-        userLongitude = 151.7817;
-      } else {
-        Position position = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 10),
-        );
-        userLatitude = position.latitude;
-        userLongitude = position.longitude;
-      }
-      
-      for (var store in stores) {
-        store.distance = _calculateDistance(
-          userLatitude!,
-          userLongitude!,
-          store.latitude,
-          store.longitude,
-        );
-        store.walkingTime = _calculateWalkingTime(store.distance!);
-      }
-      
-    } catch (e) {
-      userLatitude = -32.9273;
-      userLongitude = 151.7817;
-      
-      for (var store in stores) {
-        store.distance = _calculateDistance(
-          userLatitude!,
-          userLongitude!,
-          store.latitude,
-          store.longitude,
-        );
-        store.walkingTime = _calculateWalkingTime(store.distance!);
-      }
-    }
-  }
-  
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
     return Geolocator.distanceBetween(lat1, lon1, lat2, lon2) / 1000;
   }
@@ -468,12 +283,22 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
       storeName: store.name,
     );
     
+    // 🔍 DEBUG LOGGING FOR ROUTING
+    debugPrint('\n🔄 STORE SELECTION ROUTING DEBUG:');
+    debugPrint('   Store: ${store.name} (${store.id})');
+    debugPrint('   User Profile Type: ${widget.userProfile.userType}');
+    debugPrint('   User Type Raw Value: ${widget.userProfile.userType.toString()}');
+    debugPrint('   Is InStore? ${widget.userProfile.userType == UserType.inStore}');
+    debugPrint('   Is InStorePromo? ${widget.userProfile.userType == UserType.inStorePromo}');
+    
     // Different navigation based on user profile
     if (widget.userProfile.userType == UserType.inStore) {
+      debugPrint('   ✅ ROUTE: Profile A -> Direct to camera (label capture)');
       // Profile A (instore): Go directly to camera in label capture mode
       // NO LOCATION DATA - area, aisle, segment all remain null
       _navigateToCameraScreen(store, null, null, null, CameraMode.labelCapture);
     } else {
+      debugPrint('   ✅ ROUTE: Profile B -> Location selection first');
       // Profile B (instore promo): Go to location selection first
       // WILL COLLECT LOCATION DATA through enhanced location selection
       _navigateToLocationSelection(store);
@@ -554,21 +379,23 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   }
 
   String _getStoreLogo(String chain) {
-    switch (chain.toLowerCase()) {
-      case 'coles':
-        return 'assets/images/store_logos/coles_logo.png';
-      case 'woolworths':
-        return 'assets/images/store_logos/Woolworths_logo.png';
-      case 'iga':
-        return 'assets/images/store_logos/iga_logo.png';
-      case 'aldi':
-        return 'assets/images/store_logos/aldi_logo.png';
-      case 'new world':
-      case 'newworld':
-        return 'assets/images/store_logos/newworld_logo.png';
-      default:
-        return '';
+    final chainLower = chain.toLowerCase().trim();
+    
+    // Handle common variations
+    if (chainLower.contains('coles')) {
+      return 'assets/images/store_logos/coles_logo.png';
+    } else if (chainLower.contains('woolworth') || chainLower.contains('woolies')) {
+      return 'assets/images/store_logos/Woolworths_logo.png';
+    } else if (chainLower.contains('iga')) {
+      return 'assets/images/store_logos/iga_logo.png';
+    } else if (chainLower.contains('aldi')) {
+      return 'assets/images/store_logos/aldi_logo.png';
+    } else if (chainLower.contains('new world') || chainLower.contains('newworld')) {
+      return 'assets/images/store_logos/newworld_logo.png';
     }
+    
+    debugPrint('⚠️ No logo found for chain: "$chain" (normalized: "$chainLower")');
+    return '';
   }
 
   @override

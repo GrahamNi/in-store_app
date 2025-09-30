@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'core/design_system.dart';
 import 'components/app_components.dart';
 import 'components/app_logo.dart';
 import 'models/app_models.dart';
-import 'main_navigation_wrapper.dart';
+import 'store_loading_screen.dart'; // NEW: Pre-load stores
 import 'signup_screen.dart';
 import 'core/upload_queue_initializer.dart';
+import 'services/auth_service.dart';
+import 'services/auth_token_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,63 +89,115 @@ class _LoginScreenState extends State<LoginScreen>
     setState(() => _isLoading = true);
     AppHaptics.light();
     
-    await Future.delayed(const Duration(milliseconds: 600));
-    
-    if (mounted) {
-      // Get user profile (all users are Profile B for now)
-      UserProfile userProfile = _getUserProfile(
-        _emailController.text.toLowerCase().trim(),
+    try {
+      // Call authentication API
+      final authResponse = await AuthService.authenticate(
+        _emailController.text.trim(),
         _passwordController.text,
       );
       
-      debugPrint('👥 LOGIN: User ${userProfile.name} (${userProfile.email}) logged in as ${userProfile.userType}');
+      debugPrint('✅ AUTH SUCCESS: $authResponse');
+      debugPrint('🔑 AUTH DATA:');
+      debugPrint('   - user_id: ${authResponse.userId}');
+      debugPrint('   - token: ${authResponse.token ?? "null"}');
+      debugPrint('   - service: ${authResponse.service ?? "null"}');
+      debugPrint('   - profile: ${authResponse.profile ?? "null"}');
+      debugPrint('   - name: ${authResponse.name ?? "null"}');
+      debugPrint('   - isProfileA: ${authResponse.isProfileA}');
       
-      // Start a new visit session with the logged-in user
-      UploadQueueInitializer.startNewVisit(
-        operatorId: 'operator_${userProfile.email.hashCode}',
-        operatorName: userProfile.name,
-        storeId: 'pending_selection', // Will be updated when store is selected
-        storeName: 'Store Selection Pending',
-      );
+      // CRITICAL: Check if we got a valid user_id
+      if (authResponse.userId == 'unknown') {
+        debugPrint('❌ WARNING: Auth returned user_id="unknown"');
+        debugPrint('❌ This means authentication failed but returned 200 OK');
+        debugPrint('❌ Will use RDAS fallback for stores API');
+      }
       
-      // All users go to store selection (Profile B workflow)
-      Navigator.pushReplacement(
-        context,
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) => 
-              MainNavigationWrapper(
-                userProfile: userProfile,
-                initialIndex: 0, // Store selection is index 0
-              ),
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            const begin = Offset(1.0, 0.0);
-            const end = Offset.zero;
-            const curve = Curves.easeInOut;
-            
-            var tween = Tween(begin: begin, end: end).chain(
-              CurveTween(curve: curve),
-            );
-            
-            return SlideTransition(
-              position: animation.drive(tween),
-              child: child,
-            );
-          },
-          transitionDuration: AppDesignSystem.animationStandard,
-        ),
+      // Save authentication token for API calls
+      await AuthTokenManager.saveAuthData(
+        token: authResponse.token ?? 'no_token',
+        userId: authResponse.userId,
+        userName: authResponse.name ?? _extractUserName(_emailController.text),
       );
+      debugPrint('🔐 AUTH TOKEN: Saved for API requests');
+      
+      if (mounted) {
+        // Create user profile from auth response
+        UserProfile userProfile = _getUserProfileFromAuth(authResponse);
+        
+        debugPrint('👥 LOGIN: User ${userProfile.name} (${userProfile.email}) logged in as ${userProfile.userType}');
+        
+        // Start a new visit session with the logged-in user
+        UploadQueueInitializer.startNewVisit(
+          operatorId: authResponse.userId,
+          operatorName: userProfile.name,
+          storeId: 'pending_selection',
+          storeName: 'Store Selection Pending',
+        );
+        
+        debugPrint('🔄 LOGIN ROUTE: Navigating to StoreLoadingScreen');
+        
+        Navigator.pushReplacement(
+          context,
+          PageRouteBuilder(
+            pageBuilder: (context, animation, secondaryAnimation) => 
+                StoreLoadingScreen(
+                  userProfile: userProfile,
+                ),
+            transitionsBuilder: (context, animation, secondaryAnimation, child) {
+              const begin = Offset(1.0, 0.0);
+              const end = Offset.zero;
+              const curve = Curves.easeInOut;
+              
+              var tween = Tween(begin: begin, end: end).chain(
+                CurveTween(curve: curve),
+              );
+              
+              return SlideTransition(
+                position: animation.drive(tween),
+                child: child,
+              );
+            },
+            transitionDuration: AppDesignSystem.animationStandard,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ AUTH FAILED: $e');
+      
+      if (mounted) {
+        setState(() => _isLoading = false);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Login failed: ${e.toString()}'),
+            backgroundColor: AppDesignSystem.systemRed,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
-  UserProfile _getUserProfile(String email, String password) {
-    // 🎯 TEMPORARY: Route ALL users as Profile B (In-Store Promo) for client release
-    // This ensures everyone gets the Area → Aisle → Segment → Camera workflow
+  UserProfile _getUserProfileFromAuth(AuthResponse authResponse) {
+    // Determine profile from auth response
+    UserType userType;
+    ClientLogo clientLogo;
+    
+    if (authResponse.isProfileA) {
+      userType = UserType.inStore;
+      clientLogo = ClientLogo.rdas;
+      debugPrint('👥 PROFILE: Profile A (In-Store - RDAS)');
+    } else {
+      userType = UserType.inStorePromo;
+      clientLogo = ClientLogo.fmcg;
+      debugPrint('👥 PROFILE: Profile B (In-Store Promo - FMCG)');
+    }
     
     return UserProfile(
-      name: _extractUserName(email), // Use email to generate name
-      email: email,
-      userType: UserType.inStorePromo, // ALL users are Profile B for now
-      clientLogo: ClientLogo.fmcg, // FMCG client
+      name: authResponse.name ?? _extractUserName(_emailController.text),
+      email: _emailController.text.toLowerCase().trim(),
+      userType: userType,
+      clientLogo: clientLogo,
     );
   }
   
@@ -459,7 +514,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
           const SizedBox(height: AppDesignSystem.spacingXs),
           Text(
-            'In-Store Mode: Email with "A" + Password "A"\nIn-Store Promo Mode: Email with "B" + Password "B"',
+            'Profile A (With Home): Email + Password with "A"\nProfile B (No Home): Email + Password with "B"',
             style: AppDesignSystem.caption2.copyWith(
               color: AppDesignSystem.labelSecondary,
             ),

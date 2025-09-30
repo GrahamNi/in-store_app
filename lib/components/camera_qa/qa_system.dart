@@ -4,6 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:camera/camera.dart';
 
+/// QA Profile - Determines capture speed and quality thresholds
+enum QAProfile {
+  fast,    // Profile A - Up to 2000 images, minimal delay, essential checks only
+  quality  // Profile B - Smaller fonts, more time, full quality checks
+}
+
 /// QA Assessment Results
 class QAAssessment {
   final StabilityLevel stability;
@@ -65,9 +71,15 @@ class CameraQASystem {
   
   Stream<QAAssessment> get assessmentStream => _assessmentController.stream;
   
+  QAProfile _profile = QAProfile.quality; // Default to quality mode
   bool _isActive = false;
   bool _labelDetectionEnabled = false;
   Timer? _assessmentTimer;
+  
+  /// Set the QA profile (fast for Profile A, quality for Profile B)
+  void setProfile(QAProfile profile) {
+    _profile = profile;
+  }
 
   void start({bool enableLabelDetection = false}) {
     if (_isActive) return;
@@ -83,8 +95,14 @@ class CameraQASystem {
     //   _labelDetector.start();
     // }
     
-    // Run assessments at 2 FPS for stable, non-jittery feedback
-    _assessmentTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    // Profile-specific assessment timing
+    // Fast profile (A): Check every 800ms for minimal delay
+    // Quality profile (B): Check every 500ms for better feedback
+    final assessmentInterval = _profile == QAProfile.fast 
+        ? const Duration(milliseconds: 800) 
+        : const Duration(milliseconds: 500);
+    
+    _assessmentTimer = Timer.periodic(assessmentInterval, (_) {
       if (_isActive) {
         _performAssessment();
       }
@@ -107,8 +125,15 @@ class CameraQASystem {
     final stability = _stabilizer.currentStability;
     final focus = _focusAnalyzer.currentFocusQuality;
     
-    // Simplified scoring - focus on just stability and focus
-    double score = (stability.score * 0.5) + (focus.score * 0.5);
+    // Profile-specific scoring weights
+    // Fast profile (A): Focus on focus only (60%), less on stability (40%)
+    // Quality profile (B): Balanced between focus (50%) and stability (50%)
+    double score;
+    if (_profile == QAProfile.fast) {
+      score = (focus.score * 0.6) + (stability.score * 0.4);
+    } else {
+      score = (focus.score * 0.5) + (stability.score * 0.5);
+    }
     
     final assessment = QAAssessment(
       stability: stability,

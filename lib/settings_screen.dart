@@ -7,6 +7,8 @@ import 'account_management_screen.dart';
 import 'debug/quick_debug_screen.dart';
 import 'debug/immediate_debug_fix.dart';
 import 'store_api_test_screen.dart';
+import 'auth_test_screen.dart';
+import 'stores_api_raw_test.dart';
 
 class SettingsScreen extends StatefulWidget {
   final UserProfile? userProfile; // Optional for backward compatibility
@@ -273,9 +275,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Icons.bug_report,
             [
               _buildActionTile(
+                'RAW Stores API Test',
+                'Direct API call - check if API returns data',
+                Icons.api,
+                () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const StoresApiRawTest(),
+                    ),
+                  );
+                },
+              ),
+              _buildActionTile(
+                'Authentication Test',
+                'Test auth API with any credentials',
+                Icons.security,
+                () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AuthTestScreen(),
+                    ),
+                  );
+                },
+              ),
+              _buildActionTile(
                 'Store API Test',
                 'Test store API download and nearest store calculation',
-                Icons.api,
+                Icons.store,
                 () {
                   Navigator.push(
                     context,

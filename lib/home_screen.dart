@@ -66,7 +66,7 @@ class _HomeScreenState extends State<HomeScreen>
                   padding: context.responsivePadding,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      minHeight: constraints.maxHeight - 100, // Account for app bar
+                      minHeight: constraints.maxHeight - 100,
                       maxWidth: AppDesignSystem.mobileMaxWidth,
                     ),
                     child: Column(
@@ -74,12 +74,12 @@ class _HomeScreenState extends State<HomeScreen>
                       children: [
                         const SizedBox(height: AppDesignSystem.spacingLg),
                         
-                        // Client Logo or In-Store Logo
+                        // Client Logo
                         _buildHeaderLogo(),
                         
                         const SizedBox(height: AppDesignSystem.spacing2xl),
                         
-                        // Welcome message (no mode display)
+                        // Welcome message
                         _buildWelcomeMessage(),
                         
                         const SizedBox(height: AppDesignSystem.spacing3xl),
@@ -122,18 +122,50 @@ class _HomeScreenState extends State<HomeScreen>
     // Show client logo based on user profile
     switch (widget.userProfile.clientLogo) {
       case ClientLogo.rdas:
-        return _buildClientLogo('RDAS', Icons.business);
+        return _buildRdasLogo();
       case ClientLogo.fmcg:
         return _buildClientLogo('FMCG', Icons.shopping_cart);
       case ClientLogo.inStore:
-        return const Center(
-          child: AppLogo(
-            type: AppLogoType.inStore,
-            width: 200,
-            height: 80,
-          ),
-        );
+        return _buildInStoreLogo();
     }
+  }
+
+  Widget _buildRdasLogo() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 20, bottom: 30),
+        child: Image.asset(
+          'assets/images/rdas_logo.png',
+          height: 80,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            // Fallback if logo not found
+            return _buildClientLogo('RDAS', Icons.business);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInStoreLogo() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.only(top: 20, bottom: 30),
+        child: Image.asset(
+          'assets/images/instore_logo.png',
+          height: 80,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) {
+            // Fallback to AppLogo component
+            return const AppLogo(
+              type: AppLogoType.inStore,
+              width: 200,
+              height: 80,
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Widget _buildClientLogo(String clientName, IconData icon) {
@@ -165,13 +197,6 @@ class _HomeScreenState extends State<HomeScreen>
                 fontWeight: FontWeight.w600,
               ),
             ),
-            Text(
-              '(client logo here)',
-              style: AppDesignSystem.caption1.copyWith(
-                color: AppDesignSystem.labelTertiary,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
           ],
         ),
       ),
@@ -200,7 +225,6 @@ class _HomeScreenState extends State<HomeScreen>
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: AppDesignSystem.spacingSm),
-
       ],
     );
   }
@@ -296,7 +320,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _startNewVisit() {
     AppHaptics.light();
-    // Navigate directly to store selection screen
     Navigator.push(
       context,
       PageRouteBuilder(
@@ -324,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _startStoreSelection() {
-    _startNewVisit(); // Uses the same navigation logic
+    _startNewVisit();
   }
 
   void _showPreviousVisits() {
@@ -343,4 +366,3 @@ class _HomeScreenState extends State<HomeScreen>
     super.dispose();
   }
 }
-

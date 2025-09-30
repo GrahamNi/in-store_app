@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'core/design_system.dart';
 import 'components/app_components.dart';
 import 'models/app_models.dart';
+import 'home_screen.dart';
 import 'store_selection_screen.dart';
 import 'upload_queue_screen.dart';
 import 'settings_screen.dart';
 import 'main.dart';
 
 /// Main navigation wrapper with persistent bottom navigation
-/// ALL USERS GET PROFILE B: Store → Queue → Settings (NO HOME)
+/// Profile A: Home → Store → Queue → Settings (4 tabs)
+/// Profile B: Store → Queue → Settings (3 tabs, no home)
 class MainNavigationWrapper extends StatefulWidget {
   final UserProfile userProfile;
   final int initialIndex;
@@ -26,12 +28,73 @@ class MainNavigationWrapper extends StatefulWidget {
 class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
   late int _currentIndex;
   late PageController _pageController;
+  late List<Widget> _screens;
+  late List<BottomNavigationBarItem> _navItems;
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
+    
+    // Build screens based on user profile
+    if (widget.userProfile.userType == UserType.inStore) {
+      // Profile A: Include Home screen
+      _screens = [
+        HomeScreen(userProfile: widget.userProfile),
+        StoreSelectionScreen(userProfile: widget.userProfile),
+        const UploadQueueScreen(),
+        SettingsScreen(userProfile: widget.userProfile),
+      ];
+      
+      _navItems = const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.home_outlined),
+          activeIcon: Icon(Icons.home),
+          label: 'Home',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.store_outlined),
+          activeIcon: Icon(Icons.store),
+          label: 'Store',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.cloud_upload_outlined),
+          activeIcon: Icon(Icons.cloud_upload),
+          label: 'Queue',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.settings_outlined),
+          activeIcon: Icon(Icons.settings),
+          label: 'More',
+        ),
+      ];
+    } else {
+      // Profile B: No Home screen
+      _screens = [
+        StoreSelectionScreen(userProfile: widget.userProfile),
+        const UploadQueueScreen(),
+        SettingsScreen(userProfile: widget.userProfile),
+      ];
+      
+      _navItems = const [
+        BottomNavigationBarItem(
+          icon: Icon(Icons.store_outlined),
+          activeIcon: Icon(Icons.store),
+          label: 'Store',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.cloud_upload_outlined),
+          activeIcon: Icon(Icons.cloud_upload),
+          label: 'Queue',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.settings_outlined),
+          activeIcon: Icon(Icons.settings),
+          label: 'More',
+        ),
+      ];
+    }
   }
 
   @override
@@ -65,11 +128,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
             _currentIndex = index;
           });
         },
-        children: [
-          StoreSelectionScreen(userProfile: widget.userProfile),
-          const UploadQueueScreen(),
-          SettingsScreen(userProfile: widget.userProfile),
-        ],
+        children: _screens,
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
@@ -102,23 +161,7 @@ class _MainNavigationWrapperState extends State<MainNavigationWrapper> {
                 fontSize: 9,
               ),
               iconSize: 20,
-              items: const [
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.store_outlined),
-                  activeIcon: Icon(Icons.store),
-                  label: 'Store',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.cloud_upload_outlined),
-                  activeIcon: Icon(Icons.cloud_upload),
-                  label: 'Queue',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.settings_outlined),
-                  activeIcon: Icon(Icons.settings),
-                  label: 'More',
-                ),
-              ],
+              items: _navItems,
             ),
           ),
         ),

@@ -17,7 +17,7 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     String path = join(await getDatabasesPath(), 'label_scanner.db');
-    return await openDatabase(path, version: 2, onCreate: _onCreate, onUpgrade: _onUpgrade);
+    return await openDatabase(path, version: 3, onCreate: _onCreate, onUpgrade: _onUpgrade);
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -39,10 +39,38 @@ class DatabaseHelper {
     await db.execute('''CREATE TABLE location_cache (
       store_id TEXT PRIMARY KEY, last_area TEXT, last_aisle TEXT, last_segment TEXT, cached_at INTEGER NOT NULL
     )''');
+    
+    // NEW: Stores cache table for persistent storage
+    await db.execute('''CREATE TABLE stores_cache (
+      id TEXT PRIMARY KEY,
+      store_id TEXT NOT NULL,
+      store_name TEXT NOT NULL,
+      chain TEXT,
+      address TEXT,
+      suburb TEXT,
+      city TEXT,
+      postcode TEXT,
+      state TEXT,
+      country TEXT,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL,
+      distance_km REAL,
+      cached_at INTEGER NOT NULL
+    )''');
+    
+    // Cache metadata table
+    await db.execute('''CREATE TABLE cache_metadata (
+      key TEXT PRIMARY KEY,
+      user_latitude REAL,
+      user_longitude REAL,
+      cached_at INTEGER NOT NULL,
+      store_count INTEGER
+    )''');
 
     await db.execute('CREATE INDEX idx_captures_session ON image_captures(session_id)');
     await db.execute('CREATE INDEX idx_captures_synced ON image_captures(synced)');
     await db.execute('CREATE INDEX idx_captures_store ON image_captures(store_id)');
+    await db.execute('CREATE INDEX idx_stores_distance ON stores_cache(distance_km)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -63,6 +91,38 @@ class DatabaseHelper {
       await db.execute('''CREATE TABLE IF NOT EXISTS location_cache (
         store_id TEXT PRIMARY KEY, last_area TEXT, last_aisle TEXT, last_segment TEXT, cached_at INTEGER NOT NULL
       )''');
+    }
+    
+    if (oldVersion < 3) {
+      // Add stores cache tables
+      await db.execute('''CREATE TABLE IF NOT EXISTS stores_cache (
+        id TEXT PRIMARY KEY,
+        store_id TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        chain TEXT,
+        address TEXT,
+        suburb TEXT,
+        city TEXT,
+        postcode TEXT,
+        state TEXT,
+        country TEXT,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        distance_km REAL,
+        cached_at INTEGER NOT NULL
+      )''');
+      
+      await db.execute('''CREATE TABLE IF NOT EXISTS cache_metadata (
+        key TEXT PRIMARY KEY,
+        user_latitude REAL,
+        user_longitude REAL,
+        cached_at INTEGER NOT NULL,
+        store_count INTEGER
+      )''');
+      
+      try {
+        await db.execute('CREATE INDEX IF NOT EXISTS idx_stores_distance ON stores_cache(distance_km)');
+      } catch (_) {}
     }
   }
 
@@ -146,5 +206,99 @@ class DatabaseHelper {
     await db.update('sessions', {
       'status': 'completed', 'completed_at': DateTime.now().millisecondsSinceEpoch,
     }, where: 'id = ?', whereArgs: [sessionId]);
+  }
+  
+  // ==================== STORES CACHE METHODS ====================
+  
+  /// Save all stores to persistent cache
+  Future<void> saveStoresCache(List<Map<String, dynamic>> stores, {double? userLatitude, double? userLongitude}) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    
+    // Start transaction for bulk insert
+    await db.transaction((txn) async {
+      // Clear old cache
+      await txn.delete('stores_cache');
+      await txn.delete('cache_metadata');
+      
+      // Insert all stores
+      for (final store in stores) {
+        await txn.insert('stores_cache', {
+          'id': store['store_id']?.toString() ?? store['id']?.toString() ?? '',
+          'store_id': store['store_id']?.toString() ?? store['id']?.toString() ?? '',
+          'store_name': store['store_name']?.toString() ?? store['name']?.toString() ?? '',
+          'chain': store['chain']?.toString(),
+          'address': store['address_1']?.toString() ?? store['address']?.toString(),
+          'suburb': store['suburb']?.toString(),
+          'city': store['city']?.toString(),
+          'postcode': store['postcode']?.toString(),
+          'state': store['state']?.toString(),
+          'country': store['country']?.toString(),
+          'latitude': store['latitude'],
+          'longitude': store['longitude'],
+          'distance_km': store['distance_km'],
+          'cached_at': now,
+        });
+      }
+      
+      // Save metadata
+      await txn.insert('cache_metadata', {
+        'key': 'stores_cache',
+        'user_latitude': userLatitude,
+        'user_longitude': userLongitude,
+        'cached_at': now,
+        'store_count': stores.length,
+      });
+    });
+  }
+  
+  /// Load stores from persistent cache
+  Future<List<Map<String, dynamic>>?> loadStoresCache() async {
+    final db = await database;
+    
+    // Check if cache exists and is valid (24 hours)
+    final metaResults = await db.query('cache_metadata', where: 'key = ?', whereArgs: ['stores_cache']);
+    
+    if (metaResults.isEmpty) {
+      return null; // No cache
+    }
+    
+    final meta = metaResults.first;
+    final cachedAt = meta['cached_at'] as int;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final cacheAge = Duration(milliseconds: now - cachedAt);
+    
+    // Cache expires after 24 hours
+    if (cacheAge.inHours >= 24) {
+      return null; // Cache expired
+    }
+    
+    // Load all stores sorted by distance
+    final stores = await db.query('stores_cache', orderBy: 'distance_km ASC');
+    
+    return stores;
+  }
+  
+  /// Get cached user location
+  Future<(double?, double?)> getCachedUserLocation() async {
+    final db = await database;
+    final metaResults = await db.query('cache_metadata', where: 'key = ?', whereArgs: ['stores_cache']);
+    
+    if (metaResults.isEmpty) {
+      return (null, null);
+    }
+    
+    final meta = metaResults.first;
+    return (
+      meta['user_latitude'] as double?,
+      meta['user_longitude'] as double?,
+    );
+  }
+  
+  /// Clear stores cache
+  Future<void> clearStoresCache() async {
+    final db = await database;
+    await db.delete('stores_cache');
+    await db.delete('cache_metadata', where: 'key = ?', whereArgs: ['stores_cache']);
   }
 }
