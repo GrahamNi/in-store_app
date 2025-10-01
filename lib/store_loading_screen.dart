@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/design_system.dart';
 import 'components/app_logo.dart';
 import 'models/app_models.dart';
 import 'main_navigation_wrapper.dart';
 import 'services/store_service.dart';
-import 'services/store_cache.dart';
+import 'services/database_helper.dart';
 
 /// Pre-loads all stores after login and before showing the main app
 class StoreLoadingScreen extends StatefulWidget {
@@ -25,10 +25,11 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   
-  String _statusMessage = 'Requesting location permission...';
+  String _statusMessage = 'Setting up Stores...';
   int _loadedStores = 0;
-  int _totalStores = 0;
+  int _totalStores = 0; // Will be set from API response
   bool _hasError = false;
+  String _debugInfo = '';
   
   @override
   void initState() {
@@ -58,54 +59,89 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
   
   Future<void> _initializeApp() async {
     try {
-      // Step 1: Request location permission
+      // Step 1: Get user_id from SharedPreferences (saved during login)
       setState(() {
-        _statusMessage = 'Requesting location permission...';
-      });
-      
-      await _requestLocationPermission();
-      
-      // Step 2: Get user location
-      setState(() {
-        _statusMessage = 'Getting your location...';
-      });
-      
-      final position = await _getUserLocation();
-      debugPrint('📍 User location: ${position.latitude}, ${position.longitude}');
-      
-      // Step 3: Download ALL stores with progress
-      setState(() {
-        _statusMessage = 'Loading all stores...';
-        _totalStores = 642; // Expected count
+        _statusMessage = 'Checking user credentials...';
         _loadedStores = 0;
       });
       
-      final stores = await StoreService.getNearestStores(
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      debugPrint('🏪 STORE LOADING: Starting initialization');
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString('user_id');
+      final userEmail = prefs.getString('user_email');
+      
+      debugPrint('🏪 STORE LOADING: User ID: $userId');
+      debugPrint('🏪 STORE LOADING: User Email: $userEmail');
+      
+      setState(() {
+        _debugInfo = 'User ID: $userId';
+      });
+      
+      if (userId == null || userId.isEmpty) {
+        throw Exception('No user_id found in SharedPreferences. Please log in again.');
+      }
+      
+      // Step 2: Download ALL stores from API using user_id as token
+      setState(() {
+        _statusMessage = 'Downloading stores from server...';
+      });
+      
+      debugPrint('🏪 STORE LOADING: Calling StoreService.fetchStores()...');
+      
+      // Show initial progress estimate
+      setState(() {
+        _totalStores = 600; // Estimated total for progress bar
+        _loadedStores = 0;
+      });
+      
+      // Simulate progress during download
+      final progressTimer = Stream.periodic(
+        const Duration(milliseconds: 50),
+        (count) => count,
+      ).listen((count) {
+        if (_loadedStores < _totalStores - 30) {
+          setState(() {
+            _loadedStores += 8; // Smoother increment
+          });
+        }
+      });
+      
+      final stores = await StoreService.fetchStores();
+      
+      // Stop progress simulation
+      progressTimer.cancel();
+      
+      debugPrint('🏪 STORE LOADING: Received ${stores.length} stores');
       
       setState(() {
         _loadedStores = stores.length;
         _totalStores = stores.length;
+        _statusMessage = 'Saving stores to database...';
       });
       
-      debugPrint('✅ Loaded ${stores.length} stores from API');
+      // Step 3: Save ALL stores to SQLite database
+      debugPrint('🏪 STORE LOADING: Converting to JSON...');
       
-      // CRITICAL: Cache the stores for later use (PERSISTENT storage)
-      await StoreCache().updateCache(
-        stores,
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
+      final storesJson = stores.map((store) => store.toJson()).toList();
       
-      debugPrint('✅ Cached ${stores.length} stores in memory + database (PERSISTENT)');
-      final stats = await StoreCache().getStats();
-      debugPrint('📊 Cache stats: $stats');
+      debugPrint('🏪 STORE LOADING: Saving to database...');
       
-      // Success - navigate to main app
+      final db = DatabaseHelper();
+      await db.saveStoresCache(storesJson);
+      
+      debugPrint('✅ STORE LOADING: Successfully saved ${stores.length} stores');
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      
+      setState(() {
+        _statusMessage = 'Complete!';
+      });
+      
+      // Step 4: Navigate to MainNavigationWrapper
       if (mounted) {
-        await Future.delayed(const Duration(milliseconds: 500)); // Brief success pause
+        await Future.delayed(const Duration(milliseconds: 500));
         
         Navigator.pushReplacement(
           context,
@@ -126,76 +162,28 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
         );
       }
       
-    } catch (e) {
-      debugPrint('❌ Store loading error: $e');
+    } catch (e, stackTrace) {
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      debugPrint('❌ STORE LOADING ERROR: $e');
+      debugPrint('❌ Stack trace: $stackTrace');
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       
       if (mounted) {
         setState(() {
           _hasError = true;
-          _statusMessage = 'Failed to load stores: $e';
+          _statusMessage = 'Error: $e';
+          _debugInfo = 'Error details:\n$e\n\nPlease check console for full details.';
         });
       }
-    }
-  }
-  
-  Future<void> _requestLocationPermission() async {
-    debugPrint('📍 PERMISSION: Checking location permission...');
-    
-    LocationPermission permission = await Geolocator.checkPermission();
-    debugPrint('📍 PERMISSION: Current status: $permission');
-    
-    if (permission == LocationPermission.denied) {
-      debugPrint('📍 PERMISSION: Requesting permission...');
-      permission = await Geolocator.requestPermission();
-      debugPrint('📍 PERMISSION: New status: $permission');
-    }
-    
-    if (permission == LocationPermission.deniedForever) {
-      debugPrint('❌ PERMISSION: Permanently denied');
-      throw Exception('Location permission denied permanently. Please enable in settings.');
-    }
-    
-    if (permission == LocationPermission.denied) {
-      debugPrint('❌ PERMISSION: Denied');
-      throw Exception('Location permission denied.');
-    }
-    
-    debugPrint('✅ PERMISSION: Granted');
-  }
-  
-  Future<Position> _getUserLocation() async {
-    try {
-      return await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-        timeLimit: const Duration(seconds: 10),
-      );
-    } catch (e) {
-      // Fallback to Newcastle if location fails
-      debugPrint('⚠️ Location failed, using fallback: $e');
-      setState(() {
-        _statusMessage = 'Using default location...';
-      });
-      
-      // Return a fallback position
-      return Position(
-        latitude: -32.9273,
-        longitude: 151.7817,
-        timestamp: DateTime.now(),
-        accuracy: 0,
-        altitude: 0,
-        altitudeAccuracy: 0,
-        heading: 0,
-        headingAccuracy: 0,
-        speed: 0,
-        speedAccuracy: 0,
-      );
     }
   }
   
   void _retry() {
     setState(() {
       _hasError = false;
-      _statusMessage = 'Retrying...';
+      _statusMessage = 'Setting up Stores...';
+      _loadedStores = 0;
+      _debugInfo = '';
     });
     _initializeApp();
   }
@@ -213,7 +201,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
               children: [
                 const Spacer(),
                 
-                // Logo
                 const AppLogo(
                   type: AppLogoType.inStore,
                   width: 240,
@@ -222,7 +209,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                 
                 const SizedBox(height: AppDesignSystem.spacing3xl),
                 
-                // Loading indicator or error icon
                 if (!_hasError) ...[
                   ScaleTransition(
                     scale: _pulseAnimation,
@@ -261,7 +247,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                 
                 const SizedBox(height: AppDesignSystem.spacing2xl),
                 
-                // Status message
                 Text(
                   _statusMessage,
                   style: AppDesignSystem.body.copyWith(
@@ -272,11 +257,10 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                   textAlign: TextAlign.center,
                 ),
                 
-                // Progress counter (when loading stores)
                 if (!_hasError && _totalStores > 0) ...[
                   const SizedBox(height: AppDesignSystem.spacingMd),
                   Text(
-                    'Loaded $_loadedStores of $_totalStores stores',
+                    '$_loadedStores of $_totalStores',
                     style: AppDesignSystem.callout.copyWith(
                       color: AppDesignSystem.primaryOrange,
                       fontWeight: FontWeight.w600,
@@ -304,9 +288,29 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                   ),
                 ],
                 
+                // Debug info
+                if (_debugInfo.isNotEmpty) ...[
+                  const SizedBox(height: AppDesignSystem.spacingMd),
+                  Container(
+                    padding: const EdgeInsets.all(AppDesignSystem.spacingMd),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: Text(
+                      _debugInfo,
+                      style: AppDesignSystem.footnote.copyWith(
+                        fontFamily: 'monospace',
+                        color: const Color(0xFF1a1e5c),
+                      ),
+                      textAlign: TextAlign.left,
+                    ),
+                  ),
+                ],
+                
                 const SizedBox(height: AppDesignSystem.spacingXl),
                 
-                // Retry button (if error)
                 if (_hasError) ...[
                   ElevatedButton.icon(
                     onPressed: _retry,
@@ -326,7 +330,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                   
                   TextButton(
                     onPressed: () {
-                      // Continue without stores - will use fallback
                       Navigator.pushReplacement(
                         context,
                         MaterialPageRoute(
@@ -343,7 +346,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                 
                 const Spacer(),
                 
-                // Dtex branding
                 const AppLogo(
                   type: AppLogoType.dtex,
                   width: 100,

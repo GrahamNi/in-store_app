@@ -3,69 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'core/design_system.dart';
 import 'components/app_components.dart';
-import 'models/app_models.dart';
+import 'models/app_models.dart'; // ✅ Use Store from here
 import 'enhanced_location_selection_screen.dart';
 import 'camera_screen.dart';
 import 'core/upload_queue_initializer.dart';
 import 'services/store_service.dart';
 import 'services/store_cache.dart';
 
-class Store {
-  final String id;
-  final String name;
-  final String chain;
-  final String address;
-  final String suburb;
-  final String city;
-  final String postcode;
-  final String state;
-  final double latitude;
-  final double longitude;
-  double? distance;
-  String? walkingTime;
-
-  Store({
-    required this.id,
-    required this.name,
-    required this.chain,
-    required this.address,
-    required this.suburb,
-    required this.city,
-    required this.postcode,
-    required this.state,
-    required this.latitude,
-    required this.longitude,
-    this.distance,
-    this.walkingTime,
-  });
-
-  factory Store.fromApiData(Map<String, dynamic> data) {
-    // Helper to safely convert to double
-    double parseDouble(dynamic value) {
-      if (value == null) return 0.0;
-      if (value is double) return value;
-      if (value is int) return value.toDouble();
-      if (value is String) return double.tryParse(value) ?? 0.0;
-      return 0.0;
-    }
-    
-    return Store(
-      id: data['store_id']?.toString() ?? data['id']?.toString() ?? 'unknown',
-      name: data['store_name']?.toString() ?? data['name']?.toString() ?? 'Unknown Store',
-      chain: data['chain']?.toString() ?? data['brand']?.toString() ?? 'Unknown',
-      address: data['address_1']?.toString() ?? data['address']?.toString() ?? '',
-      suburb: data['suburb']?.toString() ?? data['locality']?.toString() ?? '',
-      city: data['city']?.toString() ?? '',
-      postcode: data['postcode']?.toString() ?? data['postal_code']?.toString() ?? '',
-      state: data['state']?.toString() ?? data['region']?.toString() ?? '',
-      latitude: parseDouble(data['latitude'] ?? data['lat']),
-      longitude: parseDouble(data['longitude'] ?? data['lon']),
-      distance: parseDouble(data['distance_km'] ?? data['distance']),
-    );
-  }
-
-  String get searchableText => '$name $chain $address $suburb $city $postcode $state'.toLowerCase();
-}
+// ❌ REMOVED DUPLICATE Store CLASS - Using the one from models/app_models.dart
 
 class StoreSelectionScreen extends StatefulWidget {
   final UserProfile userProfile;
@@ -88,18 +33,15 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   List<Store> closestStores = [];
   bool isLoading = true;
   bool isLocationLoading = false;
-  bool isUsingApi = false; // Track if we're using real API or fallback
+  bool isUsingApi = false;
   final TextEditingController _searchController = TextEditingController();
   
-  // User location for distance calculation
   double? userLatitude;
   double? userLongitude;
   
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late AnimationController _staggerController;
-
-  // No mock data - API is mandatory on first load
 
   @override
   void initState() {
@@ -120,12 +62,10 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
       end: 1.0,
     ).animate(_fadeController);
 
-    // Load stores directly
     _loadStores();
   }
   
   Future<void> _initializeStores() async {
-    // Download all stores on first launch or update if needed
     debugPrint('🎬 STORE INIT: Initializing store data...');
     _loadStores();
   }
@@ -145,28 +85,18 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
     });
     
     try {
-      // FIRST: Try to load from cache (PERSISTENT)
+      // STEP 1: Request location permission and get current GPS position
+      await _requestLocationPermission();
+      
+      // STEP 2: Load stores from cache
       final cachedStores = await StoreCache().cachedStores;
       
       if (cachedStores != null && cachedStores.isNotEmpty) {
         debugPrint('✅ CACHE HIT: Using ${cachedStores.length} cached stores');
         
-        // Get cached user location
-        final (lat, lon) = StoreCache().userLocation;
-        userLatitude = lat;
-        userLongitude = lon;
-        
-        debugPrint('📍 Using cached location: $lat, $lon');
-        
-        // Convert cached data to Store objects
+        // ✅ Convert Map to Store objects
         stores = cachedStores.map((storeData) {
-          final store = Store.fromApiData(storeData);
-          
-          if (store.distance != null && store.distance! > 0) {
-            store.walkingTime = _calculateWalkingTime(store.distance!);
-          }
-          
-          return store;
+          return Store.fromJson(storeData);
         }).toList();
         
         setState(() {
@@ -175,27 +105,17 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
         
         debugPrint('✅ Loaded ${stores.length} stores from CACHE');
       } else {
-        // FALLBACK: Load from API if cache is empty
         debugPrint('⚠️ CACHE MISS: Loading from API...');
         
-        final apiStoresData = await StoreService.getNearestStores(
-          latitude: -32.9273,
-          longitude: 151.7817,
+        // ✅ API returns List<Store> already
+        stores = await StoreService.getNearestStores(
+          latitude: userLatitude ?? -32.9273,
+          longitude: userLongitude ?? 151.7817,
         );
         
-        if (apiStoresData.isEmpty) {
+        if (stores.isEmpty) {
           throw Exception('API returned no stores');
         }
-        
-        stores = apiStoresData.map((storeData) {
-          final store = Store.fromApiData(storeData);
-          
-          if (store.distance != null && store.distance! > 0) {
-            store.walkingTime = _calculateWalkingTime(store.distance!);
-          }
-          
-          return store;
-        }).toList();
         
         setState(() {
           isUsingApi = true;
@@ -204,8 +124,36 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
         debugPrint('✅ Loaded ${stores.length} stores from API');
       }
       
+      // STEP 3: Recalculate distances based on CURRENT location
+      if (userLatitude != null && userLongitude != null) {
+        debugPrint('📍 Recalculating distances from current location: $userLatitude, $userLongitude');
+        for (var store in stores) {
+          store.distance = _calculateDistance(
+            userLatitude!,
+            userLongitude!,
+            store.latitude,
+            store.longitude,
+          );
+        }
+        debugPrint('✅ Recalculated distances for ${stores.length} stores');
+      } else {
+        debugPrint('⚠️ No current location - using cached distances');
+      }
+      
+      // STEP 4: Update closest 5 stores
       _updateClosestStores();
       filteredStores = List.from(closestStores);
+      
+      debugPrint('📍 Showing ${closestStores.length} closest stores');
+      if (closestStores.isNotEmpty) {
+        debugPrint('   1. ${closestStores[0].name} - ${closestStores[0].distance?.toStringAsFixed(1)} km');
+        if (closestStores.length > 1) {
+          debugPrint('   2. ${closestStores[1].name} - ${closestStores[1].distance?.toStringAsFixed(1)} km');
+        }
+        if (closestStores.length > 2) {
+          debugPrint('   3. ${closestStores[2].name} - ${closestStores[2].distance?.toStringAsFixed(1)} km');
+        }
+      }
 
       if (mounted) {
         setState(() {
@@ -233,6 +181,64 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
     debugPrint('🚀 STORE LOAD: _loadStores() completed');
   }
 
+  Future<void> _requestLocationPermission() async {
+    debugPrint('📍 LOCATION: Requesting location permission...');
+    
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        debugPrint('⚠️ LOCATION: Location services are disabled');
+        return;
+      }
+
+      // Check current permission status
+      LocationPermission permission = await Geolocator.checkPermission();
+      debugPrint('📍 LOCATION: Current permission status: $permission');
+      
+      if (permission == LocationPermission.denied) {
+        debugPrint('📍 LOCATION: Requesting permission...');
+        permission = await Geolocator.requestPermission();
+        
+        if (permission == LocationPermission.denied) {
+          debugPrint('⚠️ LOCATION: Permission denied by user');
+          return;
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        debugPrint('⚠️ LOCATION: Permission permanently denied');
+        return;
+      }
+
+      // Permission granted - get current position
+      debugPrint('📍 LOCATION: Permission granted, getting current position...');
+      
+      setState(() {
+        isLocationLoading = true;
+      });
+      
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 10),
+      );
+      
+      userLatitude = position.latitude;
+      userLongitude = position.longitude;
+      
+      debugPrint('✅ LOCATION: Got current position: $userLatitude, $userLongitude');
+      
+      setState(() {
+        isLocationLoading = false;
+      });
+      
+    } catch (e) {
+      debugPrint('❌ LOCATION ERROR: $e');
+      setState(() {
+        isLocationLoading = false;
+      });
+    }
+  }
 
   double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
     return Geolocator.distanceBetween(lat1, lon1, lat2, lon2) / 1000;
@@ -264,9 +270,10 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
       if (query.isEmpty) {
         filteredStores = List.from(closestStores);
       } else {
-        filteredStores = stores.where((store) =>
-          store.searchableText.contains(query.toLowerCase())
-        ).toList();
+        filteredStores = stores.where((store) {
+          final searchText = '${store.name} ${store.chain} ${store.address}'.toLowerCase();
+          return searchText.contains(query.toLowerCase());
+        }).toList();
         filteredStores.sort((a, b) => (a.distance ?? 999).compareTo(b.distance ?? 999));
       }
     });
@@ -275,7 +282,6 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   void _selectStore(Store store) {
     AppHaptics.light();
     
-    // **CRITICAL: Start a new visit session for the selected store**
     UploadQueueInitializer.startNewVisit(
       operatorId: 'operator_${widget.userProfile.email.hashCode}',
       operatorName: widget.userProfile.name,
@@ -283,24 +289,15 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
       storeName: store.name,
     );
     
-    // 🔍 DEBUG LOGGING FOR ROUTING
     debugPrint('\n🔄 STORE SELECTION ROUTING DEBUG:');
     debugPrint('   Store: ${store.name} (${store.id})');
     debugPrint('   User Profile Type: ${widget.userProfile.userType}');
-    debugPrint('   User Type Raw Value: ${widget.userProfile.userType.toString()}');
-    debugPrint('   Is InStore? ${widget.userProfile.userType == UserType.inStore}');
-    debugPrint('   Is InStorePromo? ${widget.userProfile.userType == UserType.inStorePromo}');
     
-    // Different navigation based on user profile
     if (widget.userProfile.userType == UserType.inStore) {
       debugPrint('   ✅ ROUTE: Profile A -> Direct to camera (label capture)');
-      // Profile A (instore): Go directly to camera in label capture mode
-      // NO LOCATION DATA - area, aisle, segment all remain null
       _navigateToCameraScreen(store, null, null, null, CameraMode.labelCapture);
     } else {
       debugPrint('   ✅ ROUTE: Profile B -> Location selection first');
-      // Profile B (instore promo): Go to location selection first
-      // WILL COLLECT LOCATION DATA through enhanced location selection
       _navigateToLocationSelection(store);
     }
   }
@@ -381,21 +378,25 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   String _getStoreLogo(String chain) {
     final chainLower = chain.toLowerCase().trim();
     
-    // Handle common variations
+    String logoPath = '';
+    
     if (chainLower.contains('coles')) {
-      return 'assets/images/store_logos/coles_logo.png';
+      logoPath = 'assets/images/store_logos/coles_logo.png';
     } else if (chainLower.contains('woolworth') || chainLower.contains('woolies')) {
-      return 'assets/images/store_logos/Woolworths_logo.png';
+      logoPath = 'assets/images/store_logos/Woolworths_logo.png';
     } else if (chainLower.contains('iga')) {
-      return 'assets/images/store_logos/iga_logo.png';
+      logoPath = 'assets/images/store_logos/iga_logo.png';
     } else if (chainLower.contains('aldi')) {
-      return 'assets/images/store_logos/aldi_logo.png';
+      logoPath = 'assets/images/store_logos/aldi_logo.png';
     } else if (chainLower.contains('new world') || chainLower.contains('newworld')) {
-      return 'assets/images/store_logos/newworld_logo.png';
+      logoPath = 'assets/images/store_logos/newworld_logo.png';
     }
     
-    debugPrint('⚠️ No logo found for chain: "$chain" (normalized: "$chainLower")');
-    return '';
+    if (logoPath.isNotEmpty) {
+      debugPrint('🎨 LOGO PATH: "$chain" -> "$logoPath"');
+    }
+    
+    return logoPath;
   }
 
   @override
@@ -463,7 +464,6 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
             ],
           ),
           
-          // API Status Indicator
           if (!isLoading)
             Container(
               margin: const EdgeInsets.only(top: 8),
@@ -685,6 +685,7 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
 
   Widget _buildStoreCard(Store store, bool isSmallScreen) {
     final logoPath = _getStoreLogo(store.chain);
+    debugPrint('🏁 LOGO: Store "${store.name}" chain="${store.chain}" -> path="$logoPath"');
     
     return Container(
       width: double.infinity,
@@ -712,6 +713,7 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
                         logoPath,
                         fit: BoxFit.contain,
                         errorBuilder: (context, error, stackTrace) {
+                          debugPrint('❌ LOGO ERROR: Failed to load "$logoPath" - Error: $error');
                           return _buildFallbackIcon(store, isSmallScreen);
                         },
                       )
@@ -739,7 +741,7 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
                   SizedBox(height: isSmallScreen ? 2 : AppDesignSystem.spacing2xs),
                   
                   Text(
-                    '${store.address}, ${store.suburb} ${store.postcode}',
+                    store.address,
                     style: AppDesignSystem.footnote.copyWith(
                       color: AppDesignSystem.labelSecondary,
                       fontSize: isSmallScreen ? 12 : null,
@@ -768,28 +770,13 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
                             ),
                             const SizedBox(width: 2),
                             Text(
-                              '${store.distance?.toStringAsFixed(1)} km',
+                              '${store.distance?.toStringAsFixed(1) ?? '?'} km',
                               style: AppDesignSystem.caption2.copyWith(
                                 color: _getChainColor(store.chain),
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
-                        ),
-                      ),
-                      
-                      const SizedBox(width: 8),
-                      
-                      Icon(
-                        Icons.directions_walk,
-                        size: 14,
-                        color: AppDesignSystem.labelTertiary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        store.walkingTime ?? '',
-                        style: AppDesignSystem.caption1.copyWith(
-                          color: AppDesignSystem.labelTertiary,
                         ),
                       ),
                     ],
@@ -823,7 +810,6 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen>
   }
 }
 
-// Custom painter for map background pattern
 class MapPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
