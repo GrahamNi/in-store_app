@@ -17,27 +17,25 @@ class StoreCacheManager {
     try {
       debugPrint('📥 STORE CACHE: Downloading stores from API...');
       
-      // Call API to get stores
-      final apiStores = await StoreService.getNearestStores(
-        latitude: latitude,
-        longitude: longitude,
+      // Call API to get stores (already returns List<Store>)
+      final stores = await StoreService.getNearestStores(
+        latitude: latitude ?? -32.9273,
+        longitude: longitude ?? 151.7817,
       );
       
-      if (apiStores.isEmpty) {
+      if (stores.isEmpty) {
         debugPrint('❌ STORE CACHE: API returned no stores');
         return false;
       }
       
-      debugPrint('✅ STORE CACHE: Downloaded ${apiStores.length} stores');
+      debugPrint('✅ STORE CACHE: Downloaded ${stores.length} stores');
       
-      // Convert to app format
-      final stores = apiStores.map((apiStore) {
-        return StoreService.convertApiStoreToAppStore(apiStore);
-      }).toList();
+      // ✅ Convert List<Store> to List<Map<String, dynamic>>
+      final storesJson = stores.map((store) => store.toJson()).toList();
       
       // Save to cache
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_cacheKey, jsonEncode(stores));
+      await prefs.setString(_cacheKey, jsonEncode(storesJson));
       await prefs.setString(_lastUpdateKey, DateTime.now().toIso8601String());
       
       debugPrint('💾 STORE CACHE: Cached ${stores.length} stores locally');
@@ -92,7 +90,7 @@ class StoreCacheManager {
       
     } catch (e) {
       debugPrint('❌ STORE CACHE: Error checking update time: $e');
-      return true; // Update on error
+      return true;
     }
   }
   
@@ -102,7 +100,6 @@ class StoreCacheManager {
     double? longitude,
   }) async {
     try {
-      // Check if update needed
       final needsUpdate = await StoreCacheManager.needsUpdate();
       if (!needsUpdate) {
         debugPrint('✅ STORE CACHE: Cache is fresh, no update needed');
@@ -111,7 +108,6 @@ class StoreCacheManager {
       
       debugPrint('🔄 STORE CACHE: Cache expired, attempting update...');
       
-      // Try to download new data
       final success = await downloadAndCacheStores(
         latitude: latitude,
         longitude: longitude,
@@ -125,7 +121,6 @@ class StoreCacheManager {
       
     } catch (e) {
       debugPrint('❌ STORE CACHE: Update check failed: $e');
-      // Continue with cached data
     }
   }
   

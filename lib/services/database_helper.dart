@@ -256,22 +256,15 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>?> loadStoresCache() async {
     final db = await database;
     
-    // Check if cache exists and is valid (24 hours)
+    // Check if cache exists
     final metaResults = await db.query('cache_metadata', where: 'key = ?', whereArgs: ['stores_cache']);
     
     if (metaResults.isEmpty) {
       return null; // No cache
     }
     
-    final meta = metaResults.first;
-    final cachedAt = meta['cached_at'] as int;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final cacheAge = Duration(milliseconds: now - cachedAt);
-    
-    // Cache expires after 24 hours
-    if (cacheAge.inHours >= 24) {
-      return null; // Cache expired
-    }
+    // Cache persists indefinitely - only cleared on user change or manual clear
+    // Future enhancement: Add version-based updates when backend supports it
     
     // Load all stores sorted by distance
     final stores = await db.query('stores_cache', orderBy: 'distance_km ASC');
@@ -300,5 +293,66 @@ class DatabaseHelper {
     final db = await database;
     await db.delete('stores_cache');
     await db.delete('cache_metadata', where: 'key = ?', whereArgs: ['stores_cache']);
+  }
+  
+  /// Check if there are pending uploads (images not yet synced)
+  Future<bool> hasPendingUploads() async {
+    final count = await getQueueCount();
+    return count > 0;
+  }
+  
+  /// Safe cache clear - only clears if no pending uploads
+  Future<bool> safeClearStoresCache() async {
+    if (await hasPendingUploads()) {
+      return false; // Cannot clear - pending uploads exist
+    }
+    await clearStoresCache();
+    return true; // Successfully cleared
+  }
+  
+  // ==================== PROGRESS PING STATISTICS ====================
+  
+  /// Get session statistics for progress pinging
+  /// Returns: locations_visited, aisles_visited, total_captures, uploaded_count, queue_count
+  Future<Map<String, dynamic>> getSessionStats(String sessionId) async {
+    final db = await database;
+    
+    final result = await db.rawQuery('''
+      SELECT 
+        COUNT(DISTINCT CASE WHEN area IS NOT NULL AND aisle IS NOT NULL 
+              THEN area || '_' || aisle ELSE NULL END) as locations_visited,
+        COUNT(DISTINCT aisle) as aisles_visited,
+        COUNT(*) as total_captures,
+        SUM(CASE WHEN synced = 1 THEN 1 ELSE 0 END) as uploaded_count,
+        SUM(CASE WHEN synced = 0 THEN 1 ELSE 0 END) as queue_count
+      FROM image_captures 
+      WHERE session_id = ?
+    ''', [sessionId]);
+    
+    return result.first;
+  }
+  
+  /// Get count of off-location captures (captures without area/aisle)
+  Future<int> getOffLocationCount(String sessionId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM image_captures WHERE session_id = ? AND (area IS NULL OR aisle IS NULL)',
+      [sessionId],
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+  
+  /// Get last capture timestamp for a session
+  Future<DateTime?> getLastCaptureTime(String sessionId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT MAX(timestamp) as last_capture FROM image_captures WHERE session_id = ?',
+      [sessionId],
+    );
+    
+    final timestamp = Sqflite.firstIntValue(result);
+    if (timestamp == null) return null;
+    
+    return DateTime.fromMillisecondsSinceEpoch(timestamp);
   }
 }

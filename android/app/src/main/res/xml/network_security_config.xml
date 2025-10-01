@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow all secure connections -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+    
+    <!-- Explicitly allow your Cloud Run APIs -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">auth-users-951551492434.europe-west1.run.app</domain>
+        <domain includeSubdomains="true">api-nearest-stores-951551492434.australia-southeast1.run.app</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>

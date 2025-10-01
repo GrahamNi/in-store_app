@@ -52,18 +52,8 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   
-  # Assets
   assets:
     - assets/images/
-    - assets/images/dtex_logo.png
-    - assets/images/instore_logo.png
-    - assets/images/rdas_logo.png
-    - assets/images/store_logos/coles_logo.png
-    - assets/images/store_logos/Woolworths_logo.png
-    - assets/images/store_logos/aldi_logo.png
-    - assets/images/store_logos/iga_logo.png
-    - assets/images/store_logos/newworld_logo.png
-    - assets/icons/
 
 flutter_launcher_icons:
   android: true

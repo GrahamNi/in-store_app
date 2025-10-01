@@ -9,9 +9,11 @@ import 'debug/immediate_debug_fix.dart';
 import 'store_api_test_screen.dart';
 import 'auth_test_screen.dart';
 import 'stores_api_raw_test.dart';
+import 'auth_diagnostic_screen.dart';
+import 'services/database_helper.dart';
 
 class SettingsScreen extends StatefulWidget {
-  final UserProfile? userProfile; // Optional for backward compatibility
+  final UserProfile? userProfile;
   
   const SettingsScreen({super.key, this.userProfile});
 
@@ -28,7 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Camera Settings
   bool hapticsEnabled = true;
   bool autoFocusEnabled = true;
-  double captureDelay = 1.0; // seconds
+  double captureDelay = 1.0;
   
   // Storage Settings
   bool autoDeleteUploaded = false;
@@ -68,6 +70,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
         children: [
+          // ✅ ADDED: Auth Diagnostic Section at the TOP
+          _buildSettingsSection(
+            '🔍 Auth & Store Diagnostic',
+            Icons.security,
+            [
+              _buildActionTile(
+                'Auth Diagnostic',
+                'Check user_id, profile, and stored auth data',
+                Icons.account_circle,
+                () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const AuthDiagnosticScreen(),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+          
           _buildSettingsSection(
             'Upload Settings',
             Icons.cloud_upload,
@@ -381,7 +404,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               [
                 _buildInfoTile('User', widget.userProfile!.name),
                 _buildInfoTile('Email', widget.userProfile!.email),
-                _buildInfoTile('Password', '••••••••'), // Masked password
+                _buildInfoTile('Password', '••••••••'),
                 _buildInfoTile('Type', widget.userProfile!.userType == UserType.inStore ? 'In-Store' : 'In-Store Promo'),
                 _buildActionTile(
                   'Sign Out',
@@ -415,7 +438,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Column(
         children: [
-          // Section header
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -436,8 +458,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
-          
-          // Section items
           ...children.map((child) => child).toList(),
         ],
       ),
@@ -565,30 +585,92 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _clearCache() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear Cache'),
-        content: const Text('This will remove temporary files and thumbnails. This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+  void _clearCache() async {
+    // First check if there are pending uploads
+    final db = DatabaseHelper();
+    final hasPending = await db.hasPendingUploads();
+    
+    if (hasPending) {
+      // Show warning - cannot clear cache with pending uploads
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('⚠️ Cannot Clear Cache'),
+            content: const Text(
+              'You have images still waiting to be uploaded.\n\n'
+              'Please wait for all uploads to complete before clearing the cache, '
+              'or the unuploaded images will be lost.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  // Navigate to queue screen
+                  Navigator.pushNamed(context, '/queue');
+                },
+                child: const Text('View Queue'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Cache cleared successfully')),
-              );
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
-            child: const Text('Clear'),
+        );
+      }
+      return;
+    }
+    
+    // No pending uploads - safe to clear
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clear Store Cache'),
+          content: const Text(
+            'This will remove all cached store data. '
+            'Store list will be downloaded again next time you sign in.\n\n'
+            'This action cannot be undone.',
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                
+                try {
+                  await db.clearStoresCache();
+                  
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('✅ Store cache cleared successfully'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('❌ Failed to clear cache: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+              child: const Text('Clear Cache'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   void _viewLogs() {
@@ -615,7 +697,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onPressed: () {
               Navigator.pop(context);
               setState(() {
-                // Reset all settings to defaults
                 wifiOnlyUploads = true;
                 autoUploadEnabled = true;
                 backgroundUploadEnabled = true;
@@ -682,7 +763,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
+              Navigator.pop(context);
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (context) => const LoginScreen()),

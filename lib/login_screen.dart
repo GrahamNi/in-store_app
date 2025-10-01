@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/design_system.dart';
 import 'components/app_components.dart';
 import 'components/app_logo.dart';
 import 'models/app_models.dart';
-import 'main_navigation_wrapper.dart';
+import 'store_loading_screen.dart';
 import 'signup_screen.dart';
-import 'services/store_cache_manager.dart';
+import 'services/auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -57,7 +57,6 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   Future<void> _handleLogin() async {
-    // Clear previous server error
     setState(() {
       _serverErrorMessage = null;
     });
@@ -68,48 +67,67 @@ class _LoginScreenState extends State<LoginScreen>
     AppHaptics.light();
     
     try {
-      debugPrint('🔑 LOGIN: Starting login for ${_emailController.text}');
+      debugPrint('🔑 LOGIN: Starting authentication for ${_emailController.text}');
       
-      // TODO: Real API authentication will come tomorrow
-      // For now: Simulate auth and download stores
-      await Future.delayed(const Duration(seconds: 1));
+      // ✅ CALL REAL AUTH API
+      final authResponse = await AuthService.authenticate(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
       
-      debugPrint('📥 LOGIN: Authentication successful, downloading stores...');
+      debugPrint('✅ LOGIN: Authentication successful!');
+      debugPrint('   User ID: ${authResponse.userId}');
+      debugPrint('   Profile: ${authResponse.profile}');
+      debugPrint('   Service: ${authResponse.service}');
       
-      // Download stores AFTER login (no auth required for API yet)
-      final success = await StoreCacheManager.downloadAndCacheStores();
+      // ✅ SAVE USER DATA TO SHARED PREFERENCES (INCLUDING user_id)
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_id', authResponse.userId);
+      await prefs.setString('user_email', _emailController.text.trim());
+      await prefs.setString('user_name', authResponse.name ?? _emailController.text.split('@').first);
       
-      if (!success) {
-        setState(() {
-          _serverErrorMessage = 'Failed to load store data. Please check your internet connection.';
-        });
-        return;
+      if (authResponse.token != null) {
+        await prefs.setString('auth_token', authResponse.token!);
+      }
+      if (authResponse.profile != null) {
+        await prefs.setString('user_profile', authResponse.profile!);
+      }
+      if (authResponse.service != null) {
+        await prefs.setString('user_service', authResponse.service!);
       }
       
-      debugPrint('✅ LOGIN: Stores downloaded, proceeding to app...');
+      debugPrint('💾 LOGIN: User data saved to SharedPreferences');
+      debugPrint('   user_id: ${authResponse.userId}');
       
-      // Create user profile (hardcoded for now - will come from API tomorrow)
+      // ✅ CREATE USER PROFILE FROM AUTH RESPONSE
       final userProfile = UserProfile(
-        name: _emailController.text.split('@').first,
-        email: _emailController.text,
-        userType: UserType.inStorePromo,
+        name: authResponse.name ?? _emailController.text.split('@').first,
+        email: _emailController.text.trim(),
+        userType: authResponse.isProfileA ? UserType.inStore : UserType.inStorePromo,
         clientLogo: ClientLogo.inStore,
       );
       
+      // ✅ NAVIGATE TO STORE LOADING SCREEN (which will download stores)
       if (mounted) {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (context) => MainNavigationWrapper(
+            builder: (context) => StoreLoadingScreen(
               userProfile: userProfile,
-              initialIndex: 0,
             ),
           ),
         );
       }
       
+    } on AuthException catch (e) {
+      debugPrint('❌ LOGIN: Auth error: $e');
+      if (mounted) {
+        setState(() {
+          _serverErrorMessage = e.message;
+        });
+      }
     } catch (e) {
-      debugPrint('❌ LOGIN: Error: $e');
+      debugPrint('❌ LOGIN: Unexpected error: $e');
       if (mounted) {
         setState(() {
           _serverErrorMessage = 'Login failed. Please try again.';
@@ -129,7 +147,7 @@ class _LoginScreenState extends State<LoginScreen>
       body: SafeArea(
         child: AppLoadingOverlay(
           isLoading: _isLoading,
-          message: _isLoading ? 'Loading stores...' : '',
+          message: _isLoading ? 'Authenticating...' : '',
           child: LayoutBuilder(
             builder: (context, constraints) {
               final isLandscape = constraints.maxWidth > constraints.maxHeight;

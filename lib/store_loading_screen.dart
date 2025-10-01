@@ -25,9 +25,7 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
   
-  String _statusMessage = 'Setting up Stores...';
-  int _loadedStores = 0;
-  int _totalStores = 0; // Will be set from API response
+  String _statusMessage = 'Setting up stores...';
   bool _hasError = false;
   String _debugInfo = '';
   
@@ -61,8 +59,7 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
     try {
       // Step 1: Get user_id from SharedPreferences (saved during login)
       setState(() {
-        _statusMessage = 'Checking user credentials...';
-        _loadedStores = 0;
+        _statusMessage = 'Verifying credentials...';
       });
       
       debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -76,59 +73,33 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
       debugPrint('🏪 STORE LOADING: User ID: $userId');
       debugPrint('🏪 STORE LOADING: User Email: $userEmail');
       
-      setState(() {
-        _debugInfo = 'User ID: $userId';
-      });
-      
       if (userId == null || userId.isEmpty) {
         throw Exception('No user_id found in SharedPreferences. Please log in again.');
       }
       
+      await Future.delayed(const Duration(milliseconds: 300));
+      
       // Step 2: Download ALL stores from API using user_id as token
       setState(() {
-        _statusMessage = 'Downloading stores from server...';
+        _statusMessage = 'Downloading stores...';
       });
       
       debugPrint('🏪 STORE LOADING: Calling StoreService.fetchStores()...');
       
-      // Show initial progress estimate
-      setState(() {
-        _totalStores = 600; // Estimated total for progress bar
-        _loadedStores = 0;
-      });
-      
-      // Simulate progress during download
-      final progressTimer = Stream.periodic(
-        const Duration(milliseconds: 50),
-        (count) => count,
-      ).listen((count) {
-        if (_loadedStores < _totalStores - 30) {
-          setState(() {
-            _loadedStores += 8; // Smoother increment
-          });
-        }
-      });
-      
       final stores = await StoreService.fetchStores();
-      
-      // Stop progress simulation
-      progressTimer.cancel();
       
       debugPrint('🏪 STORE LOADING: Received ${stores.length} stores');
       
+      // Step 3: Save ALL stores to SQLite database
       setState(() {
-        _loadedStores = stores.length;
-        _totalStores = stores.length;
-        _statusMessage = 'Saving stores to database...';
+        _statusMessage = 'Saving stores...';
       });
       
-      // Step 3: Save ALL stores to SQLite database
-      debugPrint('🏪 STORE LOADING: Converting to JSON...');
-      
-      final storesJson = stores.map((store) => store.toJson()).toList();
+      await Future.delayed(const Duration(milliseconds: 300));
       
       debugPrint('🏪 STORE LOADING: Saving to database...');
       
+      final storesJson = stores.map((store) => store.toJson()).toList();
       final db = DatabaseHelper();
       await db.saveStoresCache(storesJson);
       
@@ -181,8 +152,7 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
   void _retry() {
     setState(() {
       _hasError = false;
-      _statusMessage = 'Setting up Stores...';
-      _loadedStores = 0;
+      _statusMessage = 'Setting up stores...';
       _debugInfo = '';
     });
     _initializeApp();
@@ -256,37 +226,6 @@ class _StoreLoadingScreenState extends State<StoreLoadingScreen>
                   ),
                   textAlign: TextAlign.center,
                 ),
-                
-                if (!_hasError && _totalStores > 0) ...[
-                  const SizedBox(height: AppDesignSystem.spacingMd),
-                  Text(
-                    '$_loadedStores of $_totalStores',
-                    style: AppDesignSystem.callout.copyWith(
-                      color: AppDesignSystem.primaryOrange,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppDesignSystem.spacingSm),
-                  Container(
-                    width: 200,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: _totalStores > 0 ? _loadedStores / _totalStores : 0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: AppDesignSystem.primaryOrange,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
                 
                 // Debug info
                 if (_debugInfo.isNotEmpty) ...[

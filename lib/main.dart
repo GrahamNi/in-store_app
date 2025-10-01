@@ -10,6 +10,8 @@ import 'signup_screen.dart';
 import 'core/upload_queue_initializer.dart';
 import 'services/auth_service.dart';
 import 'services/auth_token_manager.dart';
+import 'debug_prefs_screen.dart';
+import 'services/progress_ping_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

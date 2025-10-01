@@ -17,6 +17,86 @@ enum UserType { inStore, inStorePromo }
 enum ClientLogo { inStore, rdas, fmcg }
 enum CameraMode { sceneCapture, labelCapture }
 
+// ✅ ADDED: Store Model
+class Store {
+  final String id;
+  final String name;
+  final String chain;
+  final String address;
+  final double latitude;
+  final double longitude;
+  double? distance; // Calculated distance from user
+
+  Store({
+    required this.id,
+    required this.name,
+    required this.chain,
+    required this.address,
+    required this.latitude,
+    required this.longitude,
+    this.distance,
+  });
+
+  factory Store.fromJson(Map<String, dynamic> json) {
+    // Helper to safely convert to double
+    double parseDouble(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    // Extract chain from store name if not provided
+    String extractChain(String? storeName, String? chainField) {
+      // If chain field exists, use it
+      if (chainField != null && chainField.isNotEmpty && chainField != 'Unknown') {
+        return chainField;
+      }
+      
+      // Otherwise extract from store name
+      if (storeName == null || storeName.isEmpty) return 'Unknown';
+      
+      final nameLower = storeName.toLowerCase();
+      if (nameLower.contains('woolworth') || nameLower.contains('woolies')) return 'Woolworths';
+      if (nameLower.contains('coles')) return 'Coles';
+      if (nameLower.contains('aldi')) return 'Aldi';
+      if (nameLower.contains('iga')) return 'IGA';
+      if (nameLower.contains('new world') || nameLower.contains('newworld')) return 'New World';
+      
+      return 'Unknown';
+    }
+
+    final storeName = json['store_name']?.toString() ?? json['name']?.toString() ?? 'Unknown Store';
+    final chainField = json['chain']?.toString() ?? json['brand']?.toString();
+
+    return Store(
+      id: json['store_id']?.toString() ?? json['id']?.toString() ?? 'unknown',
+      name: storeName,
+      chain: extractChain(storeName, chainField),
+      address: json['address_1']?.toString() ?? json['address']?.toString() ?? '',
+      latitude: parseDouble(json['latitude'] ?? json['lat']),
+      longitude: parseDouble(json['longitude'] ?? json['lon']),
+      distance: json['distance_km'] != null ? parseDouble(json['distance_km']) : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'store_id': id,
+      'name': name,
+      'store_name': name,
+      'chain': chain,
+      'address': address,
+      'address_1': address,
+      'latitude': latitude,
+      'longitude': longitude,
+      'distance_km': distance,
+    };
+  }
+}
+
 // Installation Types for Location Selection
 enum InstallationType {
   // Aisle-based installations (require aisle 1-20)
@@ -80,7 +160,7 @@ class VisitProgress {
       visitId: visitId,
       completedAisleInstallations: updated,
       offLocationCaptures: offLocationCaptures,
-      lastUpdated: DateTime.now(), // Update timestamp
+      lastUpdated: DateTime.now(),
     );
   }
   
@@ -95,18 +175,16 @@ class VisitProgress {
       visitId: visitId,
       completedAisleInstallations: completedAisleInstallations,
       offLocationCaptures: updated,
-      lastUpdated: DateTime.now(), // Update timestamp
+      lastUpdated: DateTime.now(),
     );
   }
   
-  // Check if progress has expired (older than 3 days)
   bool get isExpired {
     final now = DateTime.now();
     final difference = now.difference(lastUpdated);
     return difference.inDays >= 3;
   }
   
-  // Convert to JSON for persistence
   Map<String, dynamic> toJson() {
     return {
       'storeId': storeId,
@@ -119,7 +197,6 @@ class VisitProgress {
     };
   }
   
-  // Create from JSON
   factory VisitProgress.fromJson(Map<String, dynamic> json) {
     return VisitProgress(
       storeId: json['storeId'] as String,
