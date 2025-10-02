@@ -95,26 +95,32 @@ class CameraQASystem {
     //   _labelDetector.start();
     // }
     
-    // Profile-specific assessment timing
-    // Fast profile (A): Check every 800ms for minimal delay
-    // Quality profile (B): Check every 500ms for better feedback
+    // 🔋 OPTIMIZED: Profile-specific assessment timing for battery life
+    // Fast profile (A): Check every 1000ms (1 second) - less frequent for battery
+    // Quality profile (B): Check every 600ms for better feedback
     final assessmentInterval = _profile == QAProfile.fast 
-        ? const Duration(milliseconds: 800) 
-        : const Duration(milliseconds: 500);
+        ? const Duration(milliseconds: 1000)  // 🔋 CHANGED from 800ms
+        : const Duration(milliseconds: 600);  // 🔋 CHANGED from 500ms
     
     _assessmentTimer = Timer.periodic(assessmentInterval, (_) {
       if (_isActive) {
         _performAssessment();
       }
     });
+    
+    debugPrint('🔋 QA System started - Assessment interval: ${assessmentInterval.inMilliseconds}ms');
   }
 
   void stop() {
+    if (!_isActive) return;
+    
     _isActive = false;
     _assessmentTimer?.cancel();
     _stabilizer.stop();
     _focusAnalyzer.stop();
     _labelDetector.stop();
+    
+    debugPrint('🔋 QA System stopped - All sensors paused');
   }
 
   void updateCameraController(CameraController? controller) {
@@ -161,22 +167,39 @@ class DeviceStabilizer {
   StreamSubscription<GyroscopeEvent>? _gyroSubscription;
   
   final List<double> _recentMovements = [];
-  final int _sampleSize = 20; // Larger sample for more stable readings
+  final int _sampleSize = 15; // 🔋 REDUCED from 20 - less memory and processing
   StabilityLevel _currentStability = StabilityLevel.fair;
+  
+  // 🔋 ADDED: Throttling mechanism
+  DateTime _lastProcessTime = DateTime.now();
+  static const _throttleInterval = Duration(milliseconds: 100); // Process max once per 100ms
   
   StabilityLevel get currentStability => _currentStability;
 
   void start() {
+    // 🔋 OPTIMIZED: Listen to sensor streams with throttling
     _accelSubscription = accelerometerEventStream().listen(_onAccelerometerEvent);
     _gyroSubscription = gyroscopeEventStream().listen(_onGyroscopeEvent);
+    
+    debugPrint('🔋 Stabilizer started with throttling (100ms intervals)');
   }
 
   void stop() {
     _accelSubscription?.cancel();
     _gyroSubscription?.cancel();
+    _recentMovements.clear();  // 🔋 ADDED: Clear memory on stop
+    
+    debugPrint('🔋 Stabilizer stopped - Memory cleared');
   }
 
   void _onAccelerometerEvent(AccelerometerEvent event) {
+    // 🔋 ADDED: Throttle processing to save CPU
+    final now = DateTime.now();
+    if (now.difference(_lastProcessTime) < _throttleInterval) {
+      return; // Skip this event
+    }
+    _lastProcessTime = now;
+    
     // Calculate movement magnitude
     final magnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
     
@@ -189,6 +212,13 @@ class DeviceStabilizer {
   }
 
   void _onGyroscopeEvent(GyroscopeEvent event) {
+    // 🔋 ADDED: Throttle processing to save CPU
+    final now = DateTime.now();
+    if (now.difference(_lastProcessTime) < _throttleInterval) {
+      return; // Skip this event
+    }
+    _lastProcessTime = now;
+    
     // Add rotational movement to stability calculation
     final rotationMagnitude = sqrt(event.x * event.x + event.y * event.y + event.z * event.z);
     
@@ -235,14 +265,17 @@ class FocusAnalyzer {
   FocusQuality get currentFocusQuality => _currentFocusQuality;
 
   void start() {
-    // Check focus state every 1 second for stable feedback
-    _focusCheckTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+    // 🔋 OPTIMIZED: Check focus state every 1.5 seconds (less frequent)
+    _focusCheckTimer = Timer.periodic(const Duration(milliseconds: 1500), (_) {
       _checkFocusQuality();
     });
+    
+    debugPrint('🔋 Focus analyzer started - Check interval: 1500ms');
   }
 
   void stop() {
     _focusCheckTimer?.cancel();
+    debugPrint('🔋 Focus analyzer stopped');
   }
 
   void updateController(CameraController? controller) {
@@ -293,10 +326,11 @@ class LabelDetector {
   List<LabelCorner> get detectedCorners => _detectedCorners;
 
   void start() {
+    // 🔋 DISABLED: This feature is disabled for battery optimization
     // Run detection every 300ms (less frequent than other checks)
-    _detectionTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
-      _performDetection();
-    });
+    // _detectionTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+    //   _performDetection();
+    // });
   }
 
   void stop() {

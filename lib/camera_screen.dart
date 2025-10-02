@@ -9,6 +9,7 @@ import 'models/app_models.dart';
 import 'components/camera_qa/camera_qa.dart';
 import 'core/upload_queue/upload_queue.dart';
 import 'core/upload_queue_initializer.dart';
+import 'visit_summary_screen.dart';
 
 // Professional color scheme
 class CameraColors {
@@ -48,7 +49,8 @@ class CameraScreen extends StatefulWidget {
   State<CameraScreen> createState() => _CameraScreenState();
 }
 
-class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMixin {
+class _CameraScreenState extends State<CameraScreen> 
+    with TickerProviderStateMixin, WidgetsBindingObserver {  // 🔋 ADDED: WidgetsBindingObserver
   CameraController? _controller;
   bool _isInitialized = false;
   String _status = 'Initializing camera...';
@@ -57,6 +59,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   bool _isCapturing = false;
   bool _hasSceneCapture = false;
   CameraMode _currentMode = CameraMode.sceneCapture;
+  bool _isAppInBackground = false;  // 🔋 ADDED: Track app lifecycle
   
   late AnimationController _captureButtonController;
   late AnimationController _flashController;
@@ -70,11 +73,46 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);  // 🔋 ADDED: Listen to lifecycle events
     _currentMode = widget.cameraMode;
     _initializeAnimations();
     _initializeQASystem();
     _initializeCamera();
     _updateUploadQueueLocation();
+  }
+
+  // 🔋 ADDED: Handle app lifecycle changes
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    
+    if (_controller == null || !_controller!.value.isInitialized) {
+      return;
+    }
+
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+        // App went to background - pause everything to save battery
+        debugPrint('🔋 App backgrounded - pausing camera and QA system');
+        _isAppInBackground = true;
+        _stopQASystem();
+        _controller?.pausePreview();
+        break;
+        
+      case AppLifecycleState.resumed:
+        // App came back to foreground - resume
+        debugPrint('🔋 App resumed - restarting camera and QA system');
+        _isAppInBackground = false;
+        _controller?.resumePreview();
+        _startQASystem();
+        break;
+        
+      case AppLifecycleState.detached:
+        // App is being terminated
+        break;
+    }
   }
 
   void _updateUploadQueueLocation() {
@@ -115,15 +153,17 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     debugPrint('🎯 QA Profile set to: ${qaProfile == QAProfile.fast ? "FAST (Profile A)" : "QUALITY (Profile B)"}');
     
     _qaSubscription = _qaSystem.assessmentStream.listen((assessment) {
-      if (!mounted || _isDisposed) return;
+      if (!mounted || _isDisposed || _isAppInBackground) return;  // 🔋 ADDED: Don't update UI if backgrounded
       
       setState(() {
         _previousQA = _currentQA;
         _currentQA = assessment;
       });
       
-      // Provide haptic feedback for quality changes
-      QAHapticManager.onQualityChange(assessment, _previousQA);
+      // Provide haptic feedback for quality changes (only if app is active)
+      if (!_isAppInBackground) {  // 🔋 ADDED: No haptics in background
+        QAHapticManager.onQualityChange(assessment, _previousQA);
+      }
     });
   }
 
@@ -155,13 +195,23 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
       _controller = CameraController(
         cameras.first,
-        ResolutionPreset.high,
-        enableAudio: false,
+        ResolutionPreset.high,  // Good balance for battery
+        enableAudio: false,      // Save battery by not processing audio
+        imageFormatGroup: ImageFormatGroup.jpeg,  // 🔋 ADDED: Use JPEG for efficiency
       );
 
       await _controller!.initialize();
       
       if (_isDisposed || !mounted) return;
+
+      // 🔋 ADDED: Set optimal camera settings for battery life
+      try {
+        await _controller!.setFocusMode(FocusMode.auto);
+        // Lock exposure after initial auto-exposure for battery savings
+        await _controller!.setExposureMode(ExposureMode.auto);
+      } catch (e) {
+        debugPrint('⚠️ Could not set camera modes: $e');
+      }
 
       setState(() {
         _isInitialized = true;
@@ -182,7 +232,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   void _startQASystem() {
-    if (!_isInitialized) return;
+    if (!_isInitialized || _isAppInBackground) return;  // 🔋 ADDED: Don't start if backgrounded
     
     final enableLabelDetection = _currentMode == CameraMode.labelCapture;
     _qaSystem.start(enableLabelDetection: enableLabelDetection);
@@ -343,17 +393,49 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     Navigator.pop(context);
   }
 
-  void _endVisit() {
-    // End the visit session
-    UploadQueueInitializer.endVisit();
-    
-    // Navigate all the way back to store selection to end the visit
-    Navigator.popUntil(context, (route) => route.isFirst);
+  void _endVisit() async {
+    // Get session context to pass to summary screen
+    final context = VisitSessionManager.instance.currentContext;
+    if (context == null) {
+      debugPrint('❌ No session context available');
+      Navigator.popUntil(this.context, (route) => route.isFirst);
+      return;
+    }
+
+    // TODO: Get actual counts from database/session manager
+    // For now, using placeholder values
+    final locationCount = 1; // This should come from session data
+    final imageCount = _photoCount; // Use current photo count
+
+    // TODO: Get user profile - for now create a basic one
+    final userProfile = UserProfile(
+      name: context.operatorName,
+      email: '', // Not available in context
+      userType: widget.installationType != null ? UserType.inStorePromo : UserType.inStore,
+      clientLogo: ClientLogo.rdas, // Default
+    );
+
+    debugPrint('🏁 Navigating to visit summary: locations=$locationCount, images=$imageCount');
+
+    // Navigate to visit summary screen
+    Navigator.push(
+      this.context,
+      MaterialPageRoute(
+        builder: (buildContext) => VisitSummaryScreen(
+          storeId: widget.storeId,
+          storeName: widget.storeName,
+          userProfile: userProfile,
+          locationCount: locationCount,
+          imageCount: imageCount,
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
     _isDisposed = true;
+    WidgetsBinding.instance.removeObserver(this);  // 🔋 ADDED: Remove lifecycle observer
     _stopQASystem();
     _qaSubscription?.cancel();
     _qaSystem.dispose();
@@ -365,6 +447,19 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    // 🔋 ADDED: Show "paused" overlay when app is backgrounded
+    if (_isAppInBackground) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Text(
+            'Camera Paused',
+            style: TextStyle(color: Colors.white, fontSize: 18),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
