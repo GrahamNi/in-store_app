@@ -44,7 +44,12 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/><key>NSCameraUsageDescription</key>
-<string>This app needs camera access to capture product labels</string>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>We need camera access to capture product labels and shelf scenes.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We need to save captured images.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>We need your location to find and sort nearby stores by distance.</string>
 </dict>
 </plist>

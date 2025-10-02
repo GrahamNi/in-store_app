@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'models/app_models.dart';
 import 'components/camera_qa/camera_qa.dart';
 import 'core/upload_queue/upload_queue.dart';
@@ -171,24 +170,14 @@ class _CameraScreenState extends State<CameraScreen>
     try {
       if (_isDisposed) return;
       
-      final permission = await Permission.camera.request();
-      
-      if (_isDisposed || !mounted) return;
-      
-      if (permission != PermissionStatus.granted) {
-        setState(() {
-          _status = 'Camera permission required';
-        });
-        return;
-      }
-
+      // Get available cameras - this automatically requests iOS permission
       final cameras = await availableCameras();
       
       if (_isDisposed || !mounted) return;
       
       if (cameras.isEmpty) {
         setState(() {
-          _status = 'No camera found';
+          _status = 'No camera available';
         });
         return;
       }
@@ -581,8 +570,10 @@ class _CameraScreenState extends State<CameraScreen>
                   ),
                   
                   _buildTopButton(
-                    icon: Icons.settings,
-                    onTap: () => openAppSettings(),
+                    icon: Icons.info_outline,
+                    onTap: () {
+                      // Info button - can be used for help/instructions later
+                    },
                   ),
                 ],
               ),
