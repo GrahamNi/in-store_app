@@ -51,5 +51,7 @@
 	<string>We need to save captured images.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>We need your location to find and sort nearby stores by distance.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>We need location access to associate store visits with your captures, even when the app is in the background.</string>
 </dict>
 </plist>
