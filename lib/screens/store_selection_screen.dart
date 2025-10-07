@@ -81,6 +81,15 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen> {
       // Load stores from SQLite cache
       final storesData = await _db.loadStoresCache();
       
+      // Handle null or empty cache
+      if (storesData == null || storesData.isEmpty) {
+        debugPrint('⚠️ No stores found in cache');
+        setState(() {
+          isLoading = false;
+        });
+        return;
+      }
+      
       debugPrint('📍 Loaded ${storesData.length} stores from cache');
 
       // Convert to Store objects and calculate distances
@@ -304,4 +313,4 @@ class _StoreSelectionScreenState extends State<StoreSelectionScreen> {
       ),
     );
   }
-}f
+}

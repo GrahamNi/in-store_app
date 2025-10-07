@@ -187,6 +187,7 @@ class AppCard extends StatelessWidget {
     this.backgroundColor,
     this.elevation = 0,
     this.isSelected = false,
+    this.border,
   });
 
   final Widget child;
@@ -196,6 +197,7 @@ class AppCard extends StatelessWidget {
   final Color? backgroundColor;
   final double elevation;
   final bool isSelected;
+  final BoxBorder? border;
 
   @override
   Widget build(BuildContext context) {
@@ -209,6 +211,7 @@ class AppCard extends StatelessWidget {
             ? Colors.green[50] 
             : backgroundColor ?? AppDesignSystem.secondarySystemGroupedBackground,
         borderRadius: BorderRadius.circular(AppDesignSystem.radiusMd),
+        border: border,
         boxShadow: elevation > 0
             ? [
                 BoxShadow(
